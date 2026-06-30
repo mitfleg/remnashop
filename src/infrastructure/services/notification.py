@@ -46,6 +46,7 @@ from src.application.events.system import (
     SubscriptionRevokedEvent,
     TorrentBlockerReportEvent,
     TrialActivatedEvent,
+    UserAllDevicesDeletedEvent,
     UserDevicesUpdatedEvent,
     UserFirstConnectionEvent,
     UserPurchaseEvent,
@@ -148,6 +149,7 @@ class NotificationService(Notifier):
             (
                 UserFirstConnectionEvent,
                 UserDevicesUpdatedEvent,
+                UserAllDevicesDeletedEvent,
                 UserPurchaseEvent,
                 TrialActivatedEvent,
                 SubscriptionRevokedEvent,

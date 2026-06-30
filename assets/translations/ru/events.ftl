@@ -208,6 +208,18 @@ event-user =
     { hdr-hwid }
     { frg-user-hwid }
 
+    .all-devices-deleted =
+    #UserAllDevicesDeletedEvent
+
+    <b>🔅 Событие: Пользователь удалил все устройства!</b>
+
+    { hdr-user }
+    { frg-user-info }
+
+    <blockquote>
+    • <b>Удалено устройств</b>: { $device_count }
+    </blockquote>
+
 
 event-blacklist =
     .registration-attempt =

@@ -15,6 +15,7 @@ from .system import (
     RemnawaveVersionWarningEvent,
     TorrentBlockerReportEvent,
     TrialActivatedEvent,
+    UserAllDevicesDeletedEvent,
     UserDeviceAddedEvent,
     UserDeviceDeletedEvent,
     UserFirstConnectionEvent,
@@ -54,6 +55,7 @@ __all__ = [
     "NodeTrafficReachedEvent",
     "TorrentBlockerReportEvent",
     #
+    "UserAllDevicesDeletedEvent",
     "UserDeviceAddedEvent",
     "UserDeviceDeletedEvent",
     "UserFirstConnectionEvent",
