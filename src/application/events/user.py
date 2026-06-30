@@ -59,7 +59,7 @@ class SubscriptionExpiredEvent(UserEvent):
 @dataclass(frozen=True, kw_only=True)
 class SubscriptionExpiredAgoEvent(UserEvent):
     notification_type: NotificationType = field(
-        default=UserNotificationType.EXPIRED_1_DAY_AGO,
+        default=UserNotificationType.EXPIRED,
         init=True,
     )
 
@@ -82,7 +82,7 @@ class SubscriptionExpiredAgoEvent(UserEvent):
 @dataclass(frozen=True, kw_only=True)
 class SubscriptionExpiresEvent(UserEvent):
     notification_type: NotificationType = field(
-        default=UserNotificationType.EXPIRES_IN_1_DAY,
+        default=UserNotificationType.EXPIRES,
         init=True,
     )
 

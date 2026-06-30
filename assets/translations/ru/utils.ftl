@@ -446,11 +446,8 @@ button-type = { $button_type ->
 
 notification-type = { $notification_type ->
     [SYSTEM] Система
-    [EXPIRES_IN_3_DAYS] Подписка истекает (3 дня)
-    [EXPIRES_IN_2_DAYS] Подписка истекает (2 дня)
-    [EXPIRES_IN_1_DAY] Подписка истекает (1 день)
+    [EXPIRES] Подписка истекает
     [EXPIRED] Подписка истекла
-    [EXPIRED_1_DAY_AGO] Подписка истекла (1 день)
     [LIMITED] Трафик исчерпан
     [REFERRAL_ATTACHED] Реферал закреплен
     [REFERRAL_REWARD_RECEIVED] Вознаграждение за реферала
