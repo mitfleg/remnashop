@@ -1016,6 +1016,84 @@ msg-extra-mini-app-reserve =
 
     Работает только при включённом Mini App (BOT_MINI_APP).
 
+msg-remnashop-grace =
+    <b>⏳ Grace-режим</b>
+
+    Льготный доступ, который выдаётся пользователю после истечения подписки.
+
+    <blockquote>
+    <b>Статус:</b> { $enabled ->
+        [1] 🟢 Включено
+        *[0] 🔴 Выключено
+    }
+    <b>Лимит трафика:</b> { $traffic_mb } МБ
+    <b>Стратегия сброса:</b> { traffic-strategy }
+    <b>Длительность:</b> { $value ->
+        [0] { unlimited }
+        *[OTHER] { unit-day }
+    }
+    <b>Тег:</b> { $tag ->
+        [0] —
+        *[HAS] { $tag }
+    }
+    <b>⏺️ Внутренние:</b> { $internal_squads ->
+        [0] —
+        *[HAS] { $internal_squads }
+    }
+    <b>⏹️ Внешний:</b> { $external_squad ->
+        [0] —
+        *[HAS] { $external_squad }
+    }
+    </blockquote>
+
+msg-remnashop-grace-traffic =
+    <b>🌐 Лимит трафика grace-режима</b>
+
+    <blockquote>
+    <b>Текущий:</b> { $traffic_mb } МБ
+    </blockquote>
+
+    Введите новый лимит трафика в МБ (0 — без ограничений).
+
+msg-remnashop-grace-duration =
+    <b>⏳ Длительность grace-режима</b>
+
+    <blockquote>
+    <b>Текущая:</b> { $value ->
+        [0] { unlimited }
+        *[OTHER] { unit-day }
+    }
+    </blockquote>
+
+    Введите длительность в днях (0 — бессрочно).
+
+msg-remnashop-grace-tag =
+    <b>📌 Тег grace-режима</b>
+
+    <blockquote>
+    <b>Текущий:</b> { $tag ->
+        [0] —
+        *[HAS] { $tag }
+    }
+    </blockquote>
+
+    Введите новый тег (пустое сообщение — очистить).
+
+msg-remnashop-grace-strategy =
+    <b>🔄 Стратегия сброса трафика</b>
+
+    Выберите стратегию сброса трафика для grace-режима.
+
+msg-remnashop-grace-internal-squads =
+    <b>⏺️ Внутренние сквады grace-режима</b>
+
+    Выберите, какие внутренние группы будут присвоены в grace-режиме.
+
+msg-remnashop-grace-external-squad =
+    <b>⏹️ Внешний сквад grace-режима</b>
+
+    Выберите, какая внешняя группа будет присвоена в grace-режиме.
+
 msg-admins-main = <b>👮‍♂️ Администраторы</b>
 
 
@@ -1413,7 +1491,17 @@ msg-notifications-system-route-thread-id =
 
 
 # Subscription
-msg-subscription-main = <b>💳 Подписка</b>
+msg-subscription-main =
+    <b>💳 Подписка</b>
+
+    { $is_grace ->
+    [1]
+    <b>⏳ Временный доступ</b>{ $is_grace_indefinite ->
+        [1] { "" }
+       *[0] { " до " }{ $grace_until }
+    }
+   *[0] { "" }
+    }
 msg-subscription-plans = <b>📦 Выберите план</b>
 msg-subscription-new-success = Чтобы начать пользоваться нашим сервисом, нажмите кнопку <code>`{ btn-subscription.connect }`</code> и следуйте инструкциям!
 msg-subscription-renew-success = Ваша подписка продлена на { $added_duration }.

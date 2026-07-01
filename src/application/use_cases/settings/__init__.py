@@ -17,6 +17,15 @@ from .commands.extra import (
     ToggleTrialChannelGuard,
     UpdateResetCooldown,
 )
+from .commands.grace import (
+    SetGraceExternalSquad,
+    SetGraceStrategy,
+    ToggleGraceEnabled,
+    ToggleGraceInternalSquad,
+    UpdateGraceDuration,
+    UpdateGraceTag,
+    UpdateGraceTraffic,
+)
 from .commands.notifications import (
     ToggleNotification,
     UpdateDefaultNotificationRoute,
@@ -62,4 +71,11 @@ SETTINGS_USE_CASES: Final[tuple[type[Interactor], ...]] = (
     ToggleTrialChannelGuard,
     ToggleMiniAppReserve,
     UpdateResetCooldown,
+    SetGraceExternalSquad,
+    SetGraceStrategy,
+    ToggleGraceEnabled,
+    ToggleGraceInternalSquad,
+    UpdateGraceDuration,
+    UpdateGraceTag,
+    UpdateGraceTraffic,
 )

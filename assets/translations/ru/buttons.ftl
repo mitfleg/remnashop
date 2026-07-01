@@ -313,6 +313,7 @@ btn-remnashop =
     .menu-editor = 🎛 Редактор главного меню
     .backup = 💾 Бэкап
     .extra = ⚙️ Доп. настройки
+    .grace = ⏳ Grace-режим
 
 btn-remnashop-transaction = { $status ->
     [PENDING] 🕓
@@ -357,6 +358,18 @@ btn-remnashop-extra =
         [1] 🟢 Включено
         *[0] 🔴 Выключено
     }
+
+btn-remnashop-grace =
+    .toggle = { $enabled ->
+        [1] 🟢 Включено
+        *[0] 🔴 Выключено
+    }
+    .traffic = 🌐 Лимит трафика
+    .strategy = 🔄 Стратегия сброса
+    .duration = ⏳ Длительность
+    .tag = 📌 Тег
+    .internal-squads = ⏺️ Внутренние сквады
+    .external-squad = ⏹️ Внешний сквад
 
 btn-menu-editor =
     .text = 🏷️ Текст

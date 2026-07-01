@@ -137,6 +137,16 @@ class RemnashopExtra(StatesGroup):
     MINI_APP_RESERVE = State()
 
 
+class RemnashopGrace(StatesGroup):
+    MAIN = State()
+    TRAFFIC_INPUT = State()
+    DURATION_INPUT = State()
+    TAG_INPUT = State()
+    STRATEGY = State()
+    INTERNAL_SQUADS = State()
+    EXTERNAL_SQUAD = State()
+
+
 class RemnashopReferral(StatesGroup):
     MAIN = State()
     LEVEL = State()

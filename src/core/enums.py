@@ -268,6 +268,7 @@ class UserNotificationType(UpperStrEnum):
     LIMITED = auto()
     NOT_CONNECTED = auto()
     TORRENT_BLOCKED = auto()
+    GRACE_ACTIVATED = auto()
     #
     REFERRAL_ATTACHED = auto()
     REFERRAL_REWARD_RECEIVED = auto()

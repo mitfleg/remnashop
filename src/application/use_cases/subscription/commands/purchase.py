@@ -165,7 +165,11 @@ class PurchaseSubscription(Interactor[PurchaseSubscriptionDto, None]):
                 if duration == 0:
                     new_expire = days_to_datetime(duration)  # unlimited
                 else:
-                    base_date = max(subscription.expire_at, datetime_now())
+                    base_date = (
+                        datetime_now()
+                        if subscription.grace_until is not None
+                        else max(subscription.expire_at, datetime_now())
+                    )
                     new_expire = base_date + timedelta(days=duration)
 
                 subscription.expire_at = new_expire
@@ -175,6 +179,7 @@ class PurchaseSubscription(Interactor[PurchaseSubscriptionDto, None]):
                 subscription.tag = plan.tag
                 subscription.internal_squads = plan.internal_squads
                 subscription.external_squad = plan.external_squad
+                subscription.grace_until = None
 
                 await self.remnawave.update_user(
                     user=user,

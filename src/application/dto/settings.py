@@ -1,8 +1,10 @@
 from dataclasses import dataclass, field
 from typing import Optional
+from uuid import UUID
 
 from aiogram.enums import ButtonStyle
 from pydantic import SecretStr
+from remnapy.enums import TrafficLimitStrategy
 
 from src.core.constants import REPOSITORY, T_ME
 from src.core.enums import (
@@ -230,6 +232,25 @@ class ExtraSettingsDto(TrackableMixin):
 
 
 @dataclass(kw_only=True)
+class GraceSettingsDto(TrackableMixin):
+    enabled: bool = False
+    internal_squads: list[UUID] = field(default_factory=list)
+    external_squad: Optional[UUID] = None
+    traffic_mb: int = 0
+    traffic_strategy: TrafficLimitStrategy = TrafficLimitStrategy.NO_RESET
+    tag: Optional[str] = None
+    duration_days: int = 0
+
+    @property
+    def has_traffic_limit(self) -> bool:
+        return self.traffic_mb > 0
+
+    @property
+    def is_indefinite(self) -> bool:
+        return self.duration_days == 0
+
+
+@dataclass(kw_only=True)
 class SettingsDto(BaseDto, TrackableMixin, TimestampMixin):
     default_currency: Currency = Currency.XTR
     access: AccessSettingsDto = field(default_factory=AccessSettingsDto)
@@ -240,3 +261,4 @@ class SettingsDto(BaseDto, TrackableMixin, TimestampMixin):
     backup: BackupSettingsDto = field(default_factory=BackupSettingsDto)
     blacklist: BlacklistSettingsDto = field(default_factory=BlacklistSettingsDto)
     extra: ExtraSettingsDto = field(default_factory=ExtraSettingsDto)
+    grace: GraceSettingsDto = field(default_factory=GraceSettingsDto)

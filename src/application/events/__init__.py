@@ -24,6 +24,7 @@ from .system import (
     WebhookErrorEvent,
 )
 from .user import (
+    GraceActivatedEvent,
     ReferralAttachedEvent,
     ReferralRewardFailedEvent,
     ReferralRewardReceivedEvent,
@@ -73,4 +74,5 @@ __all__ = [
     "SubscriptionExpiresEvent",
     "SubscriptionLimitedEvent",
     "TorrentBlockedEvent",
+    "GraceActivatedEvent",
 ]

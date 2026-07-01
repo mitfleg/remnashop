@@ -14,7 +14,6 @@ from src.application.events import (
     NodeConnectionLostEvent,
     NodeConnectionRestoredEvent,
     NodeTrafficReachedEvent,
-    SubscriptionExpiredEvent,
     SubscriptionExpiresEvent,
     SubscriptionLimitedEvent,
     TorrentBlockedEvent,
@@ -28,6 +27,10 @@ from src.application.events.user import SubscriptionExpiredAgoEvent
 from src.application.use_cases.remnawave.commands.synchronization import (
     SyncRemnaUser,
     SyncRemnaUserDto,
+)
+from src.application.use_cases.subscription.commands.grace import (
+    EnterGraceMode,
+    EnterGraceModeDto,
 )
 from src.core.config import AppConfig
 from src.core.constants import DATETIME_VIEW_FORMAT, IMPORTED_TAG, T_ME, TIME_1H
@@ -56,6 +59,7 @@ class RemnaWebhookService:
         bot_service: BotService,
         #
         sync_user: SyncRemnaUser,
+        enter_grace_mode: EnterGraceMode,
     ) -> None:
         self.config = config
         self.uow = uow
@@ -66,6 +70,7 @@ class RemnaWebhookService:
         self.bot_service = bot_service
         #
         self.sync_user = sync_user
+        self.enter_grace_mode = enter_grace_mode
 
     async def handle_user_event(
         self,
@@ -427,8 +432,8 @@ class RemnaWebhookService:
                     f"more than 3 days passed"
                 )
                 return
-            await self.event_bus.publish(
-                SubscriptionExpiredEvent(user=user, is_trial=current_subscription.is_trial)
+            await self.enter_grace_mode.system(
+                EnterGraceModeDto(user=user, subscription=current_subscription)
             )
 
         if event == RemnaUserEvent.REVOKED:
