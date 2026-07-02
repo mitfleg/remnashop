@@ -105,5 +105,10 @@ EMAIL_VERIFICATION_BODY_TEMPLATE: Final[str] = (
     "Your verification code is: {code}\n\n"
     "It is valid for {minutes} minutes. If you did not request this, ignore this email."
 )
+PASSWORD_RESET_SUBJECT: Final[str] = "Your password reset code"
+PASSWORD_RESET_BODY_TEMPLATE: Final[str] = (
+    "Your password reset code is: {code}\n\n"
+    "It is valid for {minutes} minutes. If you did not request this, ignore this email."
+)
 WEB_PASSWORD_LEN: Final[int] = 8
 WEB_PASSWORD_ALPHABET: Final[str] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
