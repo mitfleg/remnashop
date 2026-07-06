@@ -165,6 +165,7 @@ btn-user =
     .subscription-url = 📋 Скопировать ссылку
     .subscription-delete = ❌ Удалить
     .subscription-reissue = ♻️ Перевыпустить
+    .transaction-grant = ✅ Выдать подписку
     .message-preview = 👀 Предпросмотр
     .message-confirm = ✅ Отправить
     .referral-reset = 🔄 Сбросить реф. ссылку
