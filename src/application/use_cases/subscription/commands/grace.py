@@ -55,11 +55,19 @@ class EnterGraceMode(Interactor[EnterGraceModeDto, None]):
                     if grace.is_indefinite
                     else datetime_now() + timedelta(days=grace.duration_days)
                 )
+                # Squads default to the expired subscription's own; grace settings
+                # act as an optional override (non-empty list / explicit UUID wins).
+                internal_squads = grace.internal_squads or sub.internal_squads
+                external_squad = (
+                    grace.external_squad
+                    if grace.external_squad is not None
+                    else sub.external_squad
+                )
                 await self.remnawave.apply_grace(
                     uuid=sub.user_remna_id,
                     expire_at=grace_until,
-                    internal_squads=grace.internal_squads,
-                    external_squad=grace.external_squad,
+                    internal_squads=internal_squads,
+                    external_squad=external_squad,
                     traffic_bytes=grace.traffic_mb * _MB,
                     traffic_strategy=grace.traffic_strategy,
                     tag=grace.tag,
