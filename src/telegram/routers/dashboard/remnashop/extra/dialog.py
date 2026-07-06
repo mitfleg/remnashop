@@ -3,7 +3,7 @@ from aiogram_dialog.widgets.input import MessageInput
 from magic_filter import F
 
 from src.core.enums import BannerName
-from src.telegram.states import DashboardRemnashop, RemnashopExtra
+from src.telegram.states import DashboardRemnashop, RemnashopExtra, RemnashopGrace
 from src.telegram.widgets import Banner, I18nFormat, IgnoreUpdate
 from src.telegram.widgets.kbd import Button, Row, Start, SwitchTo
 
@@ -18,6 +18,13 @@ from .handlers import (
 main = Window(
     Banner(BannerName.DASHBOARD),
     I18nFormat("msg-extra-main"),
+    Row(
+        Start(
+            text=I18nFormat("btn-remnashop.grace"),
+            id="grace",
+            state=RemnashopGrace.MAIN,
+        ),
+    ),
     Row(
         SwitchTo(
             text=I18nFormat(
