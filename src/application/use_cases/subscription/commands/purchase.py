@@ -53,29 +53,37 @@ class ActivateTrialSubscription(Interactor[ActivateTrialSubscriptionDto, None]):
 
         logger.info(f"{actor.log} Started trial for user '{user.id}'")
 
-        created_user = await self.remnawave.create_user(user, plan=plan)
-
-        trial_subscription = SubscriptionDto(
-            user_remna_id=created_user.uuid,
-            status=SubscriptionStatus(created_user.status),
-            is_trial=True,
-            traffic_limit=plan.traffic_limit,
-            device_limit=plan.device_limit,
-            traffic_limit_strategy=plan.traffic_limit_strategy,
-            tag=plan.tag,
-            internal_squads=plan.internal_squads,
-            external_squad=plan.external_squad,
-            expire_at=created_user.expire_at,
-            url=created_user.subscription_url,
-            plan_snapshot=plan,
-        )
-
         async with self.uow:
+            # Atomically claim the trial: on a double-click only one execution flips the flag,
+            # the loser gets claimed=False and aborts before creating a panel user or a duplicate
+            # subscription. Rolls back (restoring the flag) if remnawave creation fails.
+            claimed = await self.user_dao.claim_trial(user.id)
+            if not claimed:
+                raise TrialNotAvailableError(
+                    f"Trial already activated for user '{user.remna_name}'"
+                )
+
+            created_user = await self.remnawave.create_user(user, plan=plan)
+
+            trial_subscription = SubscriptionDto(
+                user_remna_id=created_user.uuid,
+                status=SubscriptionStatus(created_user.status),
+                is_trial=True,
+                traffic_limit=plan.traffic_limit,
+                device_limit=plan.device_limit,
+                traffic_limit_strategy=plan.traffic_limit_strategy,
+                tag=plan.tag,
+                internal_squads=plan.internal_squads,
+                external_squad=plan.external_squad,
+                expire_at=created_user.expire_at,
+                url=created_user.subscription_url,
+                plan_snapshot=plan,
+            )
+
             await self.subscription_dao.create(
                 subscription=trial_subscription,
                 user_id=user.id,
             )
-            await self.user_dao.set_trial_available(user.id, False)
             await self.uow.commit()
 
         logger.debug(f"{actor.log} Created new trial subscription for user '{user.id}'")
