@@ -313,7 +313,6 @@ btn-remnashop =
     .menu-editor = 🎛 Редактор главного меню
     .backup = 💾 Бэкап
     .extra = ⚙️ Доп. настройки
-    .grace = ⏳ Grace-режим
 
 btn-remnashop-transaction = { $status ->
     [PENDING] 🕓
@@ -325,7 +324,12 @@ btn-remnashop-transaction = { $status ->
     } #{ $user_id } · { gateway-type } · { $created_at }
 
 btn-remnashop-extra =
-    .device-single = { $enabled -> 
+    .grace = { $enabled ->
+        [1] 🟢
+        *[0] 🔴
+    } Grace-режим
+
+    .device-single = { $enabled ->
         [1] 🟢
         *[0] 🔴
     } Удаление устройства

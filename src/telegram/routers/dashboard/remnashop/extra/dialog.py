@@ -20,7 +20,7 @@ main = Window(
     I18nFormat("msg-extra-main"),
     Row(
         Start(
-            text=I18nFormat("btn-remnashop.grace"),
+            text=I18nFormat("btn-remnashop-extra.grace", enabled=F["grace_enabled"]),
             id="grace",
             state=RemnashopGrace.MAIN,
         ),

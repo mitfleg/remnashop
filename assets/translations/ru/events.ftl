@@ -330,7 +330,7 @@ event-subscription =
     .grace-activated =
     <b>⏳ Подписка истекла</b>
 
-    Включён временный доступ: <b>{ $traffic_mb ->
+    Включен временный доступ: <b>{ $traffic_mb ->
         [0] безлимит
         *[other] { $traffic_mb } МБ
         }</b>.
