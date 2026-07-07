@@ -14,6 +14,7 @@ from .commands.defaults import CreateDefaultSettings
 from .commands.extra import (
     ToggleMiniAppReserve,
     ToggleResetFeature,
+    ToggleStarsPaidRequirement,
     ToggleTrialChannelGuard,
     UpdateResetCooldown,
 )
@@ -70,6 +71,7 @@ SETTINGS_USE_CASES: Final[tuple[type[Interactor], ...]] = (
     ToggleResetFeature,
     ToggleTrialChannelGuard,
     ToggleMiniAppReserve,
+    ToggleStarsPaidRequirement,
     UpdateResetCooldown,
     SetGraceExternalSquad,
     SetGraceStrategy,

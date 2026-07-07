@@ -359,6 +359,11 @@ btn-remnashop-extra =
         *[0] 🔴
     } Резервная кнопка подключения
 
+    .stars-paid-requirement = { $enabled ->
+        [1] 🟢
+        *[0] 🔴
+    } Stars: только после оплаты
+
     .toggle = { $enabled ->
         [1] 🟢 Включено
         *[0] 🔴 Выключено

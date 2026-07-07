@@ -122,6 +122,7 @@ ntf-subscription =
     .gateways-unavailable = ❌ <i>В данный момент нет доступных платежных систем.</i>
     .renew-plan-unavailable = ❌ <i>Текущий план устарел и недоступен для продления.</i>
     .payment-creation-failed = ❌ <i>Ошибка при создании платежа. Попробуйте позже.</i>
+    .stars-requires-paid = ❌ <i>Оплата через Telegram Stars доступна только после покупки другим способом.</i>
 
 ntf-broadcast =
     .text-too-long = ❌ Превышено максимальное кол-во символов ({ $max_limit }).

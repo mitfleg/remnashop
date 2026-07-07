@@ -1016,6 +1016,16 @@ msg-extra-mini-app-reserve =
 
     Работает только при включенном Mini App (BOT_MINI_APP).
 
+msg-extra-stars-paid-requirement =
+    ⚙️ <b>Оплата через Stars только после покупки</b>
+
+    Когда включено, оплатить через Telegram Stars могут только пользователи, у которых уже есть хотя бы одна оплаченная покупка другим способом. Защищает от абьюза возвратов Stars.
+
+    <blockquote>Статус: { $enabled ->
+        [1] 🟢 Включено
+        *[0] 🔴 Выключено
+    }</blockquote>
+
 msg-remnashop-grace =
     <b>⏳ Grace-режим</b>
 
