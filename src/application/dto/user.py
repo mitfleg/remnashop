@@ -49,6 +49,9 @@ class UserDto(BaseDto, TrackableMixin, TimestampMixin):
     pending_email: Optional[str] = None
     email_verification_code_hash: Optional[str] = None
     email_verification_expires_at: Optional[datetime] = None
+    password_reset_code_hash: Optional[str] = None
+    password_reset_expires_at: Optional[datetime] = None
+    token_version: int = 0
 
     username: Optional[str] = None
     referral_code: str = ""
