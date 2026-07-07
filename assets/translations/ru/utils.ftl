@@ -352,6 +352,7 @@ gateway-type = { $gateway_type ->
     [PAYMASTER] PayMaster
     [PLATEGA] Platega
     [ROBOKASSA] RoboKassa
+    [ROLLYPAY] RollyPay
     [URLPAY] UrlPay
     [WATA] WATA
     [VALUTIX] Valutix
