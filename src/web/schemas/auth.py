@@ -3,7 +3,7 @@ from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from src.core.constants import EMAIL_VERIFICATION_CODE_LENGTH
+from src.core.constants import EMAIL_CODE_LENGTH
 from src.core.enums import AuthType
 
 
@@ -62,8 +62,8 @@ class ConfirmPasswordResetRequest(BaseModel):
 
     email: str = Field(max_length=255, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
     code: str = Field(
-        min_length=EMAIL_VERIFICATION_CODE_LENGTH,
-        max_length=EMAIL_VERIFICATION_CODE_LENGTH,
+        min_length=EMAIL_CODE_LENGTH,
+        max_length=EMAIL_CODE_LENGTH,
         pattern=r"^\d{6}$",
     )
     new_password: str = Field(min_length=8, max_length=256)
@@ -143,8 +143,8 @@ class RequestEmailVerificationCodeResponse(BaseModel):
 
 class ConfirmEmailVerificationRequest(BaseModel):
     code: str = Field(
-        min_length=EMAIL_VERIFICATION_CODE_LENGTH,
-        max_length=EMAIL_VERIFICATION_CODE_LENGTH,
+        min_length=EMAIL_CODE_LENGTH,
+        max_length=EMAIL_CODE_LENGTH,
         pattern=r"^\d{6}$",
     )
 

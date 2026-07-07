@@ -20,9 +20,9 @@ from src.application.use_cases.auth._codes import (
 )
 from src.core.config import AppConfig
 from src.core.constants import (
-    EMAIL_VERIFICATION_RESEND_COOLDOWN_SECONDS,
-    PASSWORD_RESET_BODY_TEMPLATE,
-    PASSWORD_RESET_SUBJECT,
+    EMAIL_CODE_RESEND_COOLDOWN_SECONDS,
+    EMAIL_PASSWORD_RESET_BODY_TEMPLATE,
+    EMAIL_PASSWORD_RESET_SUBJECT,
 )
 from src.core.utils.time import datetime_now
 
@@ -116,7 +116,7 @@ class RequestPasswordReset(Interactor[RequestPasswordResetDto, PasswordResetRequ
             check_email_resend_cooldown(
                 user.password_reset_expires_at,
                 self.config.email.verification_code_ttl_minutes,
-                EMAIL_VERIFICATION_RESEND_COOLDOWN_SECONDS,
+                EMAIL_CODE_RESEND_COOLDOWN_SECONDS,
                 datetime_now(),
             )
         except HTTPException:
@@ -130,8 +130,8 @@ class RequestPasswordReset(Interactor[RequestPasswordResetDto, PasswordResetRequ
         try:
             await self.email_sender.send(
                 to=data.email,
-                subject=PASSWORD_RESET_SUBJECT,
-                body=PASSWORD_RESET_BODY_TEMPLATE.format(
+                subject=EMAIL_PASSWORD_RESET_SUBJECT,
+                body=EMAIL_PASSWORD_RESET_BODY_TEMPLATE.format(
                     code=code, minutes=self.config.email.verification_code_ttl_minutes
                 ),
             )

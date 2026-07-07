@@ -13,7 +13,7 @@ from src.application.common.dao import UserDao
 from src.application.common.dao.auth import AuthSessionDao
 from src.application.dto import UserDto
 from src.core.config import AppConfig
-from src.core.constants import ACCESS_TOKEN_TTL_SECONDS, REFRESH_TOKEN_TTL_SECONDS
+from src.core.constants import AUTH_ACCESS_TOKEN_TTL_SECONDS, AUTH_REFRESH_TOKEN_TTL_SECONDS
 from src.web.schemas import AuthResponse
 
 
@@ -32,7 +32,7 @@ def _normalize_decimal_str(value: Decimal) -> str:
 
 def generate_access_token(user_id: int, token_version: int, key: str) -> tuple[str, datetime]:
     now = datetime.now(tz=timezone.utc)
-    exp = now + timedelta(seconds=ACCESS_TOKEN_TTL_SECONDS)
+    exp = now + timedelta(seconds=AUTH_ACCESS_TOKEN_TTL_SECONDS)
     token = jwt.encode(
         {"sub": user_id, "ver": token_version, "iat": now, "exp": exp},
         key,
@@ -61,7 +61,7 @@ def set_auth_cookies(response: Response, access_token: str, refresh_token: str) 
         httponly=True,
         secure=True,
         samesite="lax",
-        max_age=ACCESS_TOKEN_TTL_SECONDS,
+        max_age=AUTH_ACCESS_TOKEN_TTL_SECONDS,
     )
     response.set_cookie(
         "refresh_token",
@@ -69,7 +69,7 @@ def set_auth_cookies(response: Response, access_token: str, refresh_token: str) 
         httponly=True,
         secure=True,
         samesite="lax",
-        max_age=REFRESH_TOKEN_TTL_SECONDS,
+        max_age=AUTH_REFRESH_TOKEN_TTL_SECONDS,
     )
 
 
@@ -95,12 +95,12 @@ async def issue_session(
     )
     refresh_token = secrets.token_urlsafe(32)
     refresh_expires_at = datetime.now(tz=timezone.utc) + timedelta(
-        seconds=REFRESH_TOKEN_TTL_SECONDS
+        seconds=AUTH_REFRESH_TOKEN_TTL_SECONDS
     )
     await auth_session.store_refresh_token(
         token=refresh_token,
         user_id=user.id,
-        ttl=REFRESH_TOKEN_TTL_SECONDS,
+        ttl=AUTH_REFRESH_TOKEN_TTL_SECONDS,
     )
     return (
         access_token,
