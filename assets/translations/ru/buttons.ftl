@@ -263,6 +263,7 @@ btn-promocodes =
     .expires = ⌛ Срок действия
     .max-activations = 🔢 Лимит активаций
     .reset = 🔄 Сбросить
+    .copy-deeplink = 🔗 Скопировать диплинк
 
     .plan-duration = { $days -> 
         [one] { $days } день
