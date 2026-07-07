@@ -1929,6 +1929,12 @@ msg-ad-link-stats =
     • <b>Конверсия пробник → покупка</b>: { $trial_to_buy_rate }%
     </blockquote>
 
+    <b>Общий доход:</b>
     <blockquote>
     { $revenue_lines }
+    </blockquote>
+
+    <b>С первых покупок:</b>
+    <blockquote>
+    { $first_revenue_lines }
     </blockquote>
