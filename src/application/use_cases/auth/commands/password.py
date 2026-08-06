@@ -20,6 +20,7 @@ from src.application.use_cases.auth._codes import (
 )
 from src.core.config import AppConfig
 from src.core.constants import (
+    EMAIL_CODE_MAX_ATTEMPTS,
     EMAIL_CODE_RESEND_COOLDOWN_SECONDS,
     EMAIL_PASSWORD_RESET_BODY_TEMPLATE,
     EMAIL_PASSWORD_RESET_SUBJECT,
@@ -143,6 +144,7 @@ class RequestPasswordReset(Interactor[RequestPasswordResetDto, PasswordResetRequ
             code, self.config.crypt_key.get_secret_value()
         )
         user.password_reset_expires_at = expires_at
+        user.password_reset_attempts = 0
 
         async with self.uow:
             updated = await self.user_dao.update(user)
@@ -201,6 +203,7 @@ class ConfirmPasswordReset(Interactor[ConfirmPasswordResetDto, UserDto]):
             data.code, self.config.crypt_key.get_secret_value()
         )
         if not hmac.compare_digest(incoming_hash, user.password_reset_code_hash):
+            await self._register_failed_attempt(user)
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid or expired reset code",
@@ -215,6 +218,7 @@ class ConfirmPasswordReset(Interactor[ConfirmPasswordResetDto, UserDto]):
         user.password_hash = self.password_hasher.hash(data.new_password)
         user.password_reset_code_hash = None
         user.password_reset_expires_at = None
+        user.password_reset_attempts = 0
         user.token_version += 1
 
         async with self.uow:
@@ -228,3 +232,21 @@ class ConfirmPasswordReset(Interactor[ConfirmPasswordResetDto, UserDto]):
 
         await self.auth_session.revoke_all_user_tokens(user.id)
         return updated
+
+    async def _register_failed_attempt(self, user: UserDto) -> None:
+        """Count a wrong code and burn the code once the attempt budget is spent.
+
+        A 6-digit code is only 10^6 wide, so without a cap it could be exhausted well
+        inside its TTL. After EMAIL_CODE_MAX_ATTEMPTS the user must request a new one.
+        """
+        user.password_reset_attempts += 1
+        exhausted = user.password_reset_attempts >= EMAIL_CODE_MAX_ATTEMPTS
+
+        if exhausted:
+            user.password_reset_code_hash = None
+            user.password_reset_expires_at = None
+            logger.warning(f"Password reset code invalidated for user '{user.id}': too many tries")
+
+        async with self.uow:
+            await self.user_dao.update(user)
+            await self.uow.commit()
