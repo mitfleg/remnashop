@@ -490,7 +490,7 @@ btn-plans =
     .external-squads = ⏹️ Внешний сквад
     .duration-add = 🆕 Добавить длительность
     .price-choice = 💸 { $price } { $currency }{ $has_device_selection ->
-        [1]  + { $extra_device_price } / устройство
+        [1] { space }+ { $extra_device_price } за устройство
         *[0] { empty }
     }
     .export = 📤 Экспорт

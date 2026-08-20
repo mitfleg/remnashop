@@ -15,6 +15,10 @@ _HTML_RE = re.compile(r"<[^>]*>")
 _URL_RE = re.compile(r"(?i)\b(?:https?://|www\.|tg://|t\.me/|telegram\.me/|joinchat/)\S+")
 
 
+def decimal_to_plain(value: Decimal) -> str:
+    return f"{value.normalize():f}"
+
+
 def _round_decimal(value: Decimal) -> int:
     result = value.quantize(Decimal("1"), rounding=ROUND_HALF_UP)
     return max(0, int(result))

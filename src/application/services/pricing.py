@@ -123,7 +123,7 @@ class PricingService:
 
         if price < 0:
             raise ValueError(f"Negative price provided: '{input_price}'")
-        return price.quantize(Decimal("0.0001")).normalize()
+        return price.quantize(Decimal("0.0001"))
 
     def apply_currency_rules(self, amount: Decimal, currency: Currency) -> Decimal:
         logger.debug(f"Applying currency rules for amount '{amount}' and currency '{currency}'")

@@ -12,6 +12,7 @@ from src.application.use_cases.plan.commands.edit import (
 )
 from src.application.use_cases.plan.queries.match import MatchPlan
 from src.core.enums import Currency, PlanType
+from src.core.utils.converters import decimal_to_plain
 
 
 def make_plan() -> PlanDto:
@@ -108,6 +109,14 @@ def test_fractional_usd_unit_price_reaches_exact_variant_total() -> None:
     )
 
     assert price.final_amount == Decimal("15.70")
+
+
+def test_extra_device_price_never_uses_scientific_notation() -> None:
+    parsed = PricingService().parse_unit_price("100")
+
+    assert str(parsed) == "100.0000"
+    assert decimal_to_plain(parsed) == "100"
+    assert decimal_to_plain(Decimal("0.3250")) == "0.325"
 
 
 @pytest.mark.asyncio

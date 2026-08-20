@@ -11,6 +11,7 @@ from src.application.common import BotService, Remnawave, TranslatorRunner
 from src.application.common.dao import PlanDao
 from src.application.dto import PlanDto, PlanDurationDto, PlanPriceDto
 from src.core.enums import Currency, PlanAvailability, PlanType
+from src.core.utils.converters import decimal_to_plain
 
 
 @inject
@@ -230,7 +231,11 @@ async def prices_getter(
     plan = retort.load(dialog_manager.dialog_data[PlanDto.__name__], PlanDto)
     selected_duration = dialog_manager.dialog_data["selected_duration"]
     prices = get_prices_for_duration(plan.durations, selected_duration)
-    prices_data = [retort.dump(price) for price in prices] if prices else []
+    prices_data = []
+    for price in prices or []:
+        price_data = retort.dump(price)
+        price_data["extra_device_price"] = decimal_to_plain(price.extra_device_price)
+        prices_data.append(price_data)
 
     return {
         "duration": selected_duration,
