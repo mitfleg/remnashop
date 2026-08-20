@@ -9,11 +9,29 @@ from redis.asyncio import Redis
 
 from src.application.common import EventPublisher
 from src.application.events import BotUpdateEvent
+from src.application.services import safe_parse_version
 from src.core.config import AppConfig
 from src.infrastructure.redis.keys import LatestNotifiedVersionKey
 from src.infrastructure.taskiq.broker import broker
 
 GITHUB_RELEASE_URL: Final[str] = "https://api.github.com/repos/snoups/remnashop/releases/latest"
+
+
+def _parse_versions(
+    local_version: str,
+    remote_version: str,
+) -> tuple[Version, Version] | None:
+    local = safe_parse_version(local_version)
+    if local is None:
+        logger.warning(f"Invalid local version tag '{local_version}', skipping update check")
+        return None
+
+    remote = safe_parse_version(remote_version)
+    if remote is None:
+        logger.warning(f"Invalid remote version tag '{remote_version}', skipping update check")
+        return None
+
+    return local, remote
 
 
 @broker.task(schedule=[{"cron": "0 * * * *"}], retry_on_error=False)
@@ -65,8 +83,10 @@ async def check_bot_update(
         logger.warning(f"GitHub API returned error status: '{e}'")
         return
 
-    lv = Version(local_version)
-    rv = Version(remote_version)
+    versions = _parse_versions(local_version, remote_version)
+    if versions is None:
+        return
+    lv, rv = versions
 
     if rv <= lv:
         status = "up to date" if rv == lv else "ahead of remote"
