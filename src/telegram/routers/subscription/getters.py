@@ -14,6 +14,7 @@ from src.application.use_cases.plan.queries.match import MatchPlan, MatchPlanDto
 from src.application.use_cases.user.queries.plans import GetAvailablePlans
 from src.core.config import AppConfig
 from src.core.enums import PurchaseType
+from src.core.utils.converters import decimal_to_plain
 from src.core.utils.i18n_helpers import (
     i18n_format_days,
     i18n_format_device_limit,
@@ -113,6 +114,8 @@ async def plans_getter(
 async def device_limit_getter(
     dialog_manager: DialogManager,
     retort: FromDishka[Retort],
+    i18n: FromDishka[TranslatorRunner],
+    settings_dao: FromDishka[SettingsDao],
     **kwargs: Any,
 ) -> dict[str, Any]:
     raw_plan = dialog_manager.dialog_data.get(PlanDto.__name__)
@@ -123,10 +126,23 @@ async def device_limit_getter(
     if not plan.has_device_selection:
         raise ValueError(f"Plan '{plan.name}' does not support device selection")
 
+    settings = await settings_dao.get()
+    currency = settings.default_currency
+    selected_device_limit = plan.resolve_device_limit(
+        dialog_manager.dialog_data.get("selected_device_limit")
+    )
+    extra_device_prices = []
+    for duration in plan.durations:
+        key, kw = i18n_format_days(duration.days)
+        period = i18n.get(key, **kw)
+        price = decimal_to_plain(duration.get_extra_device_price(currency))
+        extra_device_prices.append(f"• {period}: +{price}{currency.symbol}")
+
     return {
         "base_device_limit": plan.device_limit,
         "max_device_limit": plan.max_device_limit,
-        "device_options": list(range(plan.device_limit, plan.max_device_limit + 1)),
+        "selected_device_limit": selected_device_limit,
+        "extra_device_prices": "\n".join(extra_device_prices),
         "only_single_plan": dialog_manager.dialog_data.get("only_single_plan", False),
     }
 

@@ -24,7 +24,8 @@ from .getters import (
     success_payment_getter,
 )
 from .handlers import (
-    on_device_limit_select,
+    on_device_limit_continue,
+    on_device_limit_input,
     on_duration_select,
     on_get_subscription,
     on_payment_method_select,
@@ -122,17 +123,18 @@ devices = Window(
         "msg-subscription-devices",
         base_device_limit=F["base_device_limit"],
         max_device_limit=F["max_device_limit"],
+        selected_device_limit=F["selected_device_limit"],
+        extra_device_prices=F["extra_device_prices"],
     ),
-    Group(
-        Select(
-            text=I18nFormat("btn-subscription.devices-choice", count=F["item"]),
-            id=f"{PAYMENT_PREFIX}select_devices",
-            item_id_getter=lambda item: item,
-            items="device_options",
-            type_factory=int,
-            on_click=on_device_limit_select,
+    Row(
+        Button(
+            text=I18nFormat(
+                "btn-subscription.devices-continue",
+                count=F["selected_device_limit"],
+            ),
+            id=f"{PAYMENT_PREFIX}continue_devices",
+            on_click=on_device_limit_continue,
         ),
-        width=3,
     ),
     Row(
         SwitchTo(
@@ -143,6 +145,7 @@ devices = Window(
         ),
     ),
     *back_main_menu_button,
+    MessageInput(func=on_device_limit_input),
     IgnoreUpdate(),
     state=Subscription.DEVICES,
     getter=device_limit_getter,

@@ -573,6 +573,7 @@ btn-subscription =
     .back-payment-method = ⬅️ Изменить способ оплаты
     .connect = 🚀 Подключиться
     .devices-choice = 📱 { $count }
+    .devices-continue = ✅ Продолжить: { $count }
 
     .payment-method = { $gateway_title } | { $final_amount ->
     [0] 🎁

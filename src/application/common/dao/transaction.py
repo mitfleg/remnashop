@@ -3,7 +3,7 @@ from typing import Iterable, Optional, Protocol, runtime_checkable
 from uuid import UUID
 
 from src.application.dto import GatewayStatsDto, PlanIncomeDto, TransactionDto, UserPaymentStatsDto
-from src.core.enums import PaymentGatewayType, TransactionStatus
+from src.core.enums import PaymentGatewayType, PurchaseType, TransactionStatus
 
 
 @runtime_checkable
@@ -57,6 +57,8 @@ class TransactionDao(Protocol):
         plan_id: int,
         duration_days: int,
         gateway_type: PaymentGatewayType,
+        purchase_type: PurchaseType,
+        device_limit: int,
     ) -> Optional[TransactionDto]: ...
 
     async def get_user_payment_stats(

@@ -178,6 +178,8 @@ class CreatePayment(Interactor[CreatePaymentDto, PaymentResultDto]):
                     plan_id=data.plan_snapshot.id,
                     duration_days=data.plan_snapshot.duration,
                     gateway_type=gateway_instance.data.type,
+                    purchase_type=data.purchase_type,
+                    device_limit=data.plan_snapshot.device_limit,
                 )
                 if existing is not None:
                     logger.info(

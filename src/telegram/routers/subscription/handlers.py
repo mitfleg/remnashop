@@ -1,8 +1,10 @@
 from typing import Any, Optional, TypedDict, cast
 
 from adaptix import Retort
-from aiogram.types import CallbackQuery
-from aiogram_dialog import DialogManager
+from aiogram.enums import ContentType
+from aiogram.types import CallbackQuery, Message
+from aiogram_dialog import DialogManager, ShowMode
+from aiogram_dialog.widgets.input import MessageInput
 from aiogram_dialog.widgets.kbd import Button, Select
 from dishka import FromDishka
 from dishka.integrations.aiogram_dialog import inject
@@ -10,8 +12,18 @@ from loguru import logger
 
 from src.application.common import Notifier
 from src.application.common.dao import PaymentGatewayDao, PlanDao, SettingsDao, SubscriptionDao
-from src.application.dto import PlanDto, PlanSnapshotDto, SubscriptionDto, TelegramUserDto
-from src.application.services import PricingService
+from src.application.dto import (
+    MessagePayloadDto,
+    PlanDto,
+    PlanSnapshotDto,
+    SubscriptionDto,
+    TelegramUserDto,
+)
+from src.application.services import (
+    PricingService,
+    parse_device_limit_input,
+    resolve_initial_device_limit,
+)
 from src.application.use_cases.gateways.commands.payment import (
     CreatePayment,
     CreatePaymentDto,
@@ -65,10 +77,9 @@ def _select_default_device_limit(
     plan: PlanDto,
     preferred: Optional[int] = None,
 ) -> None:
-    selected = preferred
-    if selected is None or selected < plan.device_limit or selected > plan.max_device_limit:
-        selected = plan.device_limit
-    dialog_manager.dialog_data[CURRENT_DEVICE_LIMIT_KEY] = plan.resolve_device_limit(selected)
+    dialog_manager.dialog_data[CURRENT_DEVICE_LIMIT_KEY] = resolve_initial_device_limit(
+        plan, preferred
+    )
 
 
 def _load_payment_data(dialog_manager: DialogManager) -> dict[str, CachedPaymentData]:
@@ -381,29 +392,26 @@ async def on_plan_select(
     if len(plan.durations) == 1:
         logger.info(f"{user.log} Auto-selected single duration '{plan.durations[0].days}'")
         dialog_manager.dialog_data["only_single_duration"] = True
-        await on_duration_select(callback, widget, dialog_manager, plan.durations[0].days)  # type:ignore[no-untyped-call]
+        await on_duration_select(  # type: ignore[no-untyped-call]
+            callback,
+            widget,
+            dialog_manager,
+            plan.durations[0].days,
+        )
         return
 
     dialog_manager.dialog_data["only_single_duration"] = False
     await dialog_manager.switch_to(state=Subscription.DURATION)
 
 
-@inject
-async def on_device_limit_select(
-    callback: CallbackQuery,
-    widget: Select,
+async def _save_device_limit_and_continue(
+    callback: CallbackQuery | Message,
+    widget: Button | Select | MessageInput,
     dialog_manager: DialogManager,
     selected_device_limit: int,
-    retort: FromDishka[Retort],
+    plan: PlanDto,
 ) -> None:
     user: TelegramUserDto = dialog_manager.middleware_data[USER_KEY]
-    raw_plan = dialog_manager.dialog_data.get(PlanDto.__name__)
-    if not raw_plan:
-        logger.error("PlanDto not found in dialog data")
-        await dialog_manager.start(state=Subscription.MAIN)
-        return
-
-    plan = retort.load(raw_plan, PlanDto)
     selected = plan.resolve_device_limit(selected_device_limit)
     dialog_manager.dialog_data[CURRENT_DEVICE_LIMIT_KEY] = selected
     dialog_manager.dialog_data.pop(PAYMENT_CACHE_KEY, None)
@@ -426,9 +434,74 @@ async def on_device_limit_select(
 
 
 @inject
-async def on_duration_select(
+async def on_device_limit_continue(
     callback: CallbackQuery,
-    widget: Select,
+    widget: Button,
+    dialog_manager: DialogManager,
+    retort: FromDishka[Retort],
+) -> None:
+    raw_plan = dialog_manager.dialog_data.get(PlanDto.__name__)
+    if not raw_plan:
+        logger.error("PlanDto not found in dialog data")
+        await dialog_manager.start(state=Subscription.MAIN)
+        return
+
+    plan = retort.load(raw_plan, PlanDto)
+    selected = plan.resolve_device_limit(dialog_manager.dialog_data.get(CURRENT_DEVICE_LIMIT_KEY))
+    await _save_device_limit_and_continue(callback, widget, dialog_manager, selected, plan)
+
+
+@inject
+async def on_device_limit_input(
+    message: Message,
+    widget: MessageInput,
+    dialog_manager: DialogManager,
+    retort: FromDishka[Retort],
+    notifier: FromDishka[Notifier],
+) -> None:
+    dialog_manager.show_mode = ShowMode.EDIT
+    user: TelegramUserDto = dialog_manager.middleware_data[USER_KEY]
+    raw_plan = dialog_manager.dialog_data.get(PlanDto.__name__)
+    if not raw_plan:
+        logger.error("PlanDto not found in dialog data")
+        await dialog_manager.start(state=Subscription.MAIN)
+        return
+
+    plan = retort.load(raw_plan, PlanDto)
+    if message.content_type != ContentType.TEXT:
+        selected = None
+    else:
+        try:
+            selected = parse_device_limit_input(message.text, plan)
+        except ValueError:
+            selected = None
+
+    if selected is None:
+        await notifier.notify_user(
+            user,
+            payload=MessagePayloadDto(
+                i18n_key="ntf-subscription.invalid-device-limit",
+                i18n_kwargs={
+                    "min_device_limit": plan.device_limit,
+                    "max_device_limit": plan.max_device_limit,
+                },
+            ),
+        )
+        return
+
+    await _save_device_limit_and_continue(
+        message,
+        widget,
+        dialog_manager,
+        selected,
+        plan,
+    )
+
+
+@inject
+async def on_duration_select(
+    callback: CallbackQuery | Message,
+    widget: Button | Select | MessageInput,
     dialog_manager: DialogManager,
     selected_duration: int,
     retort: FromDishka[Retort],

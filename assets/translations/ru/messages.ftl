@@ -1424,10 +1424,15 @@ msg-notifications-system-route-thread-id =
 msg-subscription-main = <b>💳 Подписка</b>
 msg-subscription-plans = <b>📦 Выберите план</b>
 msg-subscription-devices =
-    <b>📱 Выберите количество устройств</b>
+    <b>📱 Количество устройств</b>
 
-    В базовую цену включено { $base_device_limit }.
-    Можно выбрать до { $max_device_limit }; итоговая цена будет показана на следующем шаге.
+    В базовую цену уже включено: { $base_device_limit }.
+    Если нужно больше, отправьте общее количество от { $base_device_limit } до { $max_device_limit }.
+
+    Доплата за каждое дополнительное устройство:
+    { $extra_device_prices }
+
+    Сейчас выбрано: <b>{ $selected_device_limit }</b>.
 msg-subscription-new-success = Чтобы начать пользоваться нашим сервисом, нажмите кнопку <code>`{ btn-subscription.connect }`</code> и следуйте инструкциям!
 msg-subscription-renew-success = Ваша подписка продлена на { $added_duration }.
 
