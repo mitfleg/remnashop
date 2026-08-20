@@ -1,0 +1,9 @@
+services:
+  remnashop:
+    image: ${REMNASHOP_IMAGE:-ghcr.io/mitfleg/remnashop:custom}
+
+  remnashop-taskiq-worker:
+    image: ${REMNASHOP_IMAGE:-ghcr.io/mitfleg/remnashop:custom}
+
+  remnashop-taskiq-scheduler:
+    image: ${REMNASHOP_IMAGE:-ghcr.io/mitfleg/remnashop:custom}

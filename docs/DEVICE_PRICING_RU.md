@@ -34,3 +34,14 @@
 
 Исключения из HWID-лимита задаются переменной
 `REMNAWAVE_HWID_LIMIT_EXEMPT_USER_IDS` как список числовых ID через запятую.
+
+## Собственный Docker-образ
+
+После push в `main` workflow `Remnashop - Custom Image` публикует два тега:
+
+- `ghcr.io/mitfleg/remnashop:custom`;
+- `ghcr.io/mitfleg/remnashop:custom-<sha>`.
+
+На сервере официальный Compose подключается вместе с
+`deploy/docker-compose.custom-image.yml`. Для контролируемого деплоя следует использовать
+неизменяемый digest либо тег `custom-<sha>`, а не плавающий тег `custom`.
