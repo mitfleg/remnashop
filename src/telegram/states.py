@@ -22,6 +22,7 @@ class Subscription(StatesGroup):
     PROMOCODE = State()
     PLAN = State()
     PLANS = State()
+    DEVICES = State()
     DURATION = State()
     PAYMENT_METHOD = State()
     CONFIRM = State()

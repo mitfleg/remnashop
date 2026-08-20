@@ -28,6 +28,7 @@ class Plan(BaseSql, TimestampMixin):
 
     traffic_limit: Mapped[int]
     device_limit: Mapped[int]
+    max_device_limit: Mapped[int]
 
     allowed_telegram_ids: Mapped[list[int]] = mapped_column(ARRAY(BigInteger), server_default="{}")
     allowed_emails: Mapped[list[str]] = mapped_column(ARRAY(Text), server_default="{}")
@@ -75,5 +76,6 @@ class PlanPrice(BaseSql):
 
     currency: Mapped[Currency]
     price: Mapped[Decimal] = mapped_column(Numeric(10, 2))
+    extra_device_price: Mapped[Decimal] = mapped_column(Numeric(12, 4))
 
     plan_duration: Mapped["PlanDuration"] = relationship(back_populates="prices")

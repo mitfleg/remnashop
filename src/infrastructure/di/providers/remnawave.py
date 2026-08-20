@@ -6,6 +6,10 @@ from loguru import logger
 from remnapy import RemnawaveSDK
 
 from src.core.config import AppConfig
+from src.infrastructure.services.remnawave_v3_compat import (
+    remnawave_v3_request_hook,
+    remnawave_v3_response_hook,
+)
 
 
 class RemnawaveProvider(Provider):
@@ -31,6 +35,10 @@ class RemnawaveProvider(Provider):
             cookies=config.remnawave.cookies,
             verify=True,
             timeout=Timeout(connect=15.0, read=25.0, write=10.0, pool=5.0),
+            event_hooks={
+                "request": [remnawave_v3_request_hook],
+                "response": [remnawave_v3_response_hook],
+            },
         )
 
         try:

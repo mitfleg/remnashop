@@ -9,6 +9,10 @@
 
 **Этот проект представляет собой Telegram-бота для продажи VPN-подписок, интегрированного с Remnawave.**
 
+> В этой ветке добавлены выбор количества устройств с автоматическим расчётом цены и
+> встроенная совместимость с Remnawave v3. Настройка описана в
+> [docs/DEVICE_PRICING_RU.md](docs/DEVICE_PRICING_RU.md).
+
 [![Static Badge](https://img.shields.io/badge/public_group-white?style=social&logo=Telegram&logoColor=blue&logoSize=auto&labelColor=white&link=https%3A%2F%2Ft.me%2Fsn0ups)](https://t.me/remna_shop)
 [![Static Badge](https://img.shields.io/badge/remnawave-white?style=social&logo=Telegram&logoColor=blue&logoSize=auto&labelColor=white&link=https%3A%2F%2Ft.me%2Fsnoups)](https://t.me/+xQs17zMzwCY1NzYy)
 ![GitHub Repo stars](https://img.shields.io/github/stars/snoups/remnashop)

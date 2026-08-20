@@ -1,3 +1,4 @@
+import re
 from dataclasses import dataclass
 
 from loguru import logger
@@ -106,6 +107,14 @@ class UpdatePlanType(Interactor[UpdatePlanTypeDto, PlanDto]):
             if data.plan.device_limit == 0:
                 data.plan.device_limit = 1
 
+        if data.type in {PlanType.DEVICES, PlanType.BOTH}:
+            data.plan.max_device_limit = max(
+                data.plan.device_limit,
+                data.plan.max_device_limit,
+            )
+        else:
+            data.plan.max_device_limit = 0
+
         data.plan.type = data.type
 
         logger.info(f"{actor.log} Updated plan type in memory to '{data.type}'")
@@ -145,16 +154,25 @@ class UpdatePlanDevice(Interactor[UpdatePlanDeviceDto, PlanDto]):
     required_permission = Permission.REMNASHOP_PLAN_EDITOR
 
     async def _execute(self, actor: UserDto, data: UpdatePlanDeviceDto) -> PlanDto:
-        if not is_positive_int(data.input_device_limit):
+        match = re.fullmatch(r"\s*(\d+)(?:\s*-\s*(\d+))?\s*", data.input_device_limit)
+        if not match:
             logger.warning(f"{actor.log} Invalid device limit value: '{data.input_device_limit}'")
             raise ValueError(
-                f"Device limit must be a positive integer, got '{data.input_device_limit}'"
+                "Device limit must be a positive integer or a range like 4-10"
             )
 
-        device_limit = int(data.input_device_limit)
-        data.plan.device_limit = device_limit
+        device_limit = int(match.group(1))
+        max_device_limit = int(match.group(2) or device_limit)
+        if device_limit < 1 or max_device_limit < device_limit or max_device_limit > 100:
+            raise ValueError("Device range must be between 1 and 100")
 
-        logger.info(f"{actor.log} Updated plan device limit in memory to '{device_limit}'")
+        data.plan.device_limit = device_limit
+        data.plan.max_device_limit = max_device_limit
+
+        logger.info(
+            f"{actor.log} Updated plan device limits in memory to "
+            f"'{device_limit}-{max_device_limit}'"
+        )
         return data.plan
 
 
@@ -173,8 +191,22 @@ class UpdatePlanPrice(Interactor[UpdatePlanPriceDto, PlanDto]):
         self.pricing_service = pricing_service
 
     async def _execute(self, actor: UserDto, data: UpdatePlanPriceDto) -> PlanDto:
+        values = re.fullmatch(
+            r"\s*([0-9]+(?:[.,][0-9]+)?)"
+            r"(?:\s*\+\s*([0-9]+(?:[.,][0-9]+)?))?\s*",
+            data.input_price,
+        )
+        if not values:
+            raise ValueError("Price must use the format BASE or BASE + EXTRA")
+
         try:
-            new_price = self.pricing_service.parse_price(data.input_price, data.currency)
+            new_price = self.pricing_service.parse_price(
+                values.group(1).replace(",", "."),
+                data.currency,
+            )
+            extra_device_price = self.pricing_service.parse_unit_price(
+                (values.group(2) or "0").replace(",", ".")
+            )
         except ValueError:
             logger.warning(f"{actor.log} Invalid price format: '{data.input_price}'")
             raise
@@ -184,9 +216,11 @@ class UpdatePlanPrice(Interactor[UpdatePlanPriceDto, PlanDto]):
                 for price_dto in duration.prices:
                     if price_dto.currency == data.currency:
                         price_dto.price = new_price
+                        price_dto.extra_device_price = extra_device_price
                         logger.info(
                             f"{actor.log} Updated price for duration '{data.duration}' "
-                            f"days and currency '{data.currency}' to '{new_price}'"
+                            f"days and currency '{data.currency}' to '{new_price}' "
+                            f"with extra device price '{extra_device_price}'"
                         )
                         return data.plan
 

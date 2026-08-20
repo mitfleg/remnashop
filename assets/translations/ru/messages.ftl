@@ -1219,7 +1219,10 @@ msg-plan-configurator =
         }
     • <b>Лимит устройств</b>: { $is_unlimited_devices -> 
         [1] { unlimited }
-        *[0] { $device_limit }
+        *[0] { $has_device_selection ->
+            [1] от { $device_limit } до { $max_device_limit }
+            *[0] { $device_limit }
+        }
         }
     </blockquote>
 
@@ -1282,7 +1285,8 @@ msg-plan-traffic =
 msg-plan-devices =
     <b>📱 Изменить лимит устройств</b>
 
-    Введите новый лимит устройств плана.
+    Введите фиксированный лимит, например <code>4</code>, или диапазон выбора,
+    например <code>4-10</code>. Первое число входит в базовую цену.
 
 msg-plan-durations =
     <b>⏳ Длительности плана</b>
@@ -1308,7 +1312,11 @@ msg-plan-price =
             *[OTHER] { unit-day }
         })</b>
 
-    Введите новую цену для валюты { $currency }.
+    Введите базовую цену для валюты { $currency }.
+    { $has_device_selection ->
+    [1] Формат: <code>база + доплата за устройство</code>, например <code>700 + 100</code>.
+    *[0] Пример: <code>700</code>.
+    }
 
 msg-plan-allowed-users = 
     <b>👥 Изменить список разрешенных пользователей</b>
@@ -1415,6 +1423,11 @@ msg-notifications-system-route-thread-id =
 # Subscription
 msg-subscription-main = <b>💳 Подписка</b>
 msg-subscription-plans = <b>📦 Выберите план</b>
+msg-subscription-devices =
+    <b>📱 Выберите количество устройств</b>
+
+    В базовую цену включено { $base_device_limit }.
+    Можно выбрать до { $max_device_limit }; итоговая цена будет показана на следующем шаге.
 msg-subscription-new-success = Чтобы начать пользоваться нашим сервисом, нажмите кнопку <code>`{ btn-subscription.connect }`</code> и следуйте инструкциям!
 msg-subscription-renew-success = Ваша подписка продлена на { $added_duration }.
 

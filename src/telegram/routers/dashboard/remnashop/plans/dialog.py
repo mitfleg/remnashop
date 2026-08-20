@@ -543,7 +543,9 @@ prices = Window(
             text=I18nFormat(
                 "btn-plans.price-choice",
                 price=F["item"]["price"],
+                extra_device_price=F["item"]["extra_device_price"],
                 currency=F["item"]["currency"],
+                has_device_selection=F["data"]["has_device_selection"],
             ),
             id="price_select",
             item_id_getter=lambda item: item["currency"],
@@ -566,7 +568,12 @@ prices = Window(
 
 price = Window(
     Banner(BannerName.DASHBOARD),
-    I18nFormat("msg-plan-price", value=F["duration"], currency=F["currency"]),
+    I18nFormat(
+        "msg-plan-price",
+        value=F["duration"],
+        currency=F["currency"],
+        has_device_selection=F["has_device_selection"],
+    ),
     Row(
         SwitchTo(
             text=I18nFormat("btn-back.general"),

@@ -31,7 +31,12 @@ class PlanSnapshotDto:
     is_trial: bool = False
 
     @classmethod
-    def from_plan(cls, plan: "PlanDto", duration: int) -> Self:
+    def from_plan(
+        cls,
+        plan: "PlanDto",
+        duration: int,
+        device_limit: Optional[int] = None,
+    ) -> Self:
         return cls(
             id=plan.id,
             name=plan.name,
@@ -39,7 +44,7 @@ class PlanSnapshotDto:
             type=plan.type,
             traffic_limit_strategy=plan.traffic_limit_strategy,
             traffic_limit=plan.traffic_limit,
-            device_limit=plan.device_limit,
+            device_limit=plan.resolve_device_limit(device_limit),
             duration=duration,
             internal_squads=plan.internal_squads,
             external_squad=plan.external_squad,
@@ -75,6 +80,7 @@ class PlanDto(BaseDto, TrackableMixin, TimestampMixin):
 
     traffic_limit: int = 100
     device_limit: int = 1
+    max_device_limit: int = 0
 
     allowed_telegram_ids: list[int] = field(default_factory=list)
     allowed_emails: list[str] = field(default_factory=list)
@@ -95,6 +101,23 @@ class PlanDto(BaseDto, TrackableMixin, TimestampMixin):
     def is_unlimited_devices(self) -> bool:
         return self.type not in {PlanType.DEVICES, PlanType.BOTH}
 
+    @property
+    def has_device_selection(self) -> bool:
+        return not self.is_unlimited_devices and self.max_device_limit > self.device_limit
+
+    def resolve_device_limit(self, requested: Optional[int] = None) -> int:
+        if self.is_unlimited_devices:
+            return 0
+        if not self.has_device_selection:
+            return self.device_limit
+
+        selected = self.device_limit if requested is None else requested
+        if selected < self.device_limit or selected > self.max_device_limit:
+            raise ValueError(
+                f"Device limit must be between {self.device_limit} and {self.max_device_limit}"
+            )
+        return selected
+
     def get_duration(self, days: int) -> Optional["PlanDurationDto"]:
         return next((d for d in self.durations if d.days == days), None)
 
@@ -113,8 +136,29 @@ class PlanDurationDto(BaseDto, TrackableMixin):
             )
         return price
 
+    def get_extra_device_price(self, currency: Currency) -> Decimal:
+        price = next(
+            (p.extra_device_price for p in self.prices if p.currency == currency),
+            None,
+        )
+        if price is None:
+            raise PriceNotFoundError(
+                f"No extra device price for currency '{currency}' in duration '{self.days}'"
+            )
+        return price
+
+    def get_price_for_devices(
+        self,
+        currency: Currency,
+        base_device_limit: int,
+        selected_device_limit: int,
+    ) -> Decimal:
+        extra_devices = max(0, selected_device_limit - base_device_limit)
+        return self.get_price(currency) + self.get_extra_device_price(currency) * extra_devices
+
 
 @dataclass(kw_only=True)
 class PlanPriceDto(BaseDto, TrackableMixin):
     currency: Currency
     price: Decimal
+    extra_device_price: Decimal = Decimal(0)

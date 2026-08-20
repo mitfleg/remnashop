@@ -489,7 +489,10 @@ btn-plans =
     .internal-squads = ⏺️ Внутренние сквады
     .external-squads = ⏹️ Внешний сквад
     .duration-add = 🆕 Добавить длительность
-    .price-choice = 💸 { $price } { $currency }
+    .price-choice = 💸 { $price } { $currency }{ $has_device_selection ->
+        [1]  + { $extra_device_price } / устройство
+        *[0] { empty }
+    }
     .export = 📤 Экспорт
     .import = 📥 Импорт
     .exporting = 📤 Экспортировать
@@ -565,9 +568,11 @@ btn-subscription =
     .pay = 💳 Оплатить
     .get = 🎁 Получить бесплатно
     .back-plans = ⬅️ Назад к выбору плана
+    .back-devices = ⬅️ Изменить количество устройств
     .back-duration = ⬅️ Изменить длительность
     .back-payment-method = ⬅️ Изменить способ оплаты
     .connect = 🚀 Подключиться
+    .devices-choice = 📱 { $count }
 
     .payment-method = { $gateway_title } | { $final_amount ->
     [0] 🎁

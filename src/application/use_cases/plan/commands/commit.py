@@ -30,13 +30,23 @@ def _validate_and_prepare_plan(actor: UserDto, plan: PlanDto) -> None:
         )
         raise TrialDurationError()
 
+    if plan.max_device_limit == 0 and plan.device_limit > 0:
+        plan.max_device_limit = plan.device_limit
+    if plan.device_limit < 0 or plan.max_device_limit < plan.device_limit:
+        raise ValueError("Invalid device limit range")
+
     if plan.type == PlanType.DEVICES:
         plan.traffic_limit = 0
     elif plan.type == PlanType.TRAFFIC:
         plan.device_limit = 0
+        plan.max_device_limit = 0
     elif plan.type == PlanType.UNLIMITED:
         plan.traffic_limit = 0
         plan.device_limit = 0
+        plan.max_device_limit = 0
+
+    if plan.is_trial:
+        plan.max_device_limit = plan.device_limit
 
     if plan.availability != PlanAvailability.ALLOWED:
         plan.allowed_telegram_ids = []

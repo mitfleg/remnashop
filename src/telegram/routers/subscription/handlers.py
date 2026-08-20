@@ -42,6 +42,7 @@ async def on_subscription_start(start_data: Any, manager: DialogManager) -> None
 PAYMENT_CACHE_KEY = "payment_cache"
 CURRENT_DURATION_KEY = "selected_duration"
 CURRENT_METHOD_KEY = "selected_payment_method"
+CURRENT_DEVICE_LIMIT_KEY = "selected_device_limit"
 
 
 class CachedPaymentData(TypedDict):
@@ -51,9 +52,23 @@ class CachedPaymentData(TypedDict):
 
 
 def _get_cache_key(
-    duration: int, gateway_type: PaymentGatewayType, purchase_type: PurchaseType
+    duration: int,
+    gateway_type: PaymentGatewayType,
+    purchase_type: PurchaseType,
+    device_limit: int,
 ) -> str:
-    return f"{purchase_type}:{duration}:{gateway_type.value}"
+    return f"{purchase_type}:{duration}:{gateway_type.value}:{device_limit}"
+
+
+def _select_default_device_limit(
+    dialog_manager: DialogManager,
+    plan: PlanDto,
+    preferred: Optional[int] = None,
+) -> None:
+    selected = preferred
+    if selected is None or selected < plan.device_limit or selected > plan.max_device_limit:
+        selected = plan.device_limit
+    dialog_manager.dialog_data[CURRENT_DEVICE_LIMIT_KEY] = plan.resolve_device_limit(selected)
 
 
 def _load_payment_data(dialog_manager: DialogManager) -> dict[str, CachedPaymentData]:
@@ -83,14 +98,26 @@ async def _create_payment_and_get_data(
     duration = plan.get_duration(duration_days)
     payment_gateway = await payment_gateway_dao.get_by_type(gateway_type)
     purchase_type: PurchaseType = dialog_manager.dialog_data["purchase_type"]
+    selected_device_limit = plan.resolve_device_limit(
+        dialog_manager.dialog_data.get(CURRENT_DEVICE_LIMIT_KEY)
+    )
 
     if not duration or not payment_gateway:
         logger.error(f"{user.log} Failed to find duration or gateway for payment creation")
         return None
 
-    transaction_plan = PlanSnapshotDto.from_plan(plan, duration.days)
+    transaction_plan = PlanSnapshotDto.from_plan(
+        plan,
+        duration.days,
+        device_limit=selected_device_limit,
+    )
     pricing = pricing_service.calculate_for_duration(
-        user, duration, payment_gateway.currency, apply_discount=not plan.is_trial
+        user,
+        duration,
+        payment_gateway.currency,
+        apply_discount=not plan.is_trial,
+        base_device_limit=plan.device_limit,
+        selected_device_limit=selected_device_limit,
     )
 
     try:
@@ -135,7 +162,16 @@ async def _resolve_renew_plan(
         dialog_manager.dialog_data[PlanDto.__name__] = retort.dump(matched_plan)
         dialog_manager.dialog_data["only_single_plan"] = True
         dialog_manager.dialog_data["plan_is_modified"] = False
-        await dialog_manager.switch_to(state=Subscription.DURATION)
+        if matched_plan.has_device_selection:
+            _select_default_device_limit(
+                dialog_manager,
+                matched_plan,
+                current_subscription.device_limit,
+            )
+            await dialog_manager.switch_to(state=Subscription.DEVICES)
+        else:
+            _select_default_device_limit(dialog_manager, matched_plan)
+            await dialog_manager.switch_to(state=Subscription.DURATION)
         return True
 
     snapshot_id = current_subscription.plan_snapshot.id
@@ -147,7 +183,16 @@ async def _resolve_renew_plan(
         dialog_manager.dialog_data[PlanDto.__name__] = retort.dump(modified_plan)
         dialog_manager.dialog_data["only_single_plan"] = True
         dialog_manager.dialog_data["plan_is_modified"] = True
-        await dialog_manager.switch_to(state=Subscription.DURATION)
+        if modified_plan.has_device_selection:
+            _select_default_device_limit(
+                dialog_manager,
+                modified_plan,
+                current_subscription.device_limit,
+            )
+            await dialog_manager.switch_to(state=Subscription.DEVICES)
+        else:
+            _select_default_device_limit(dialog_manager, modified_plan)
+            await dialog_manager.switch_to(state=Subscription.DURATION)
         return True
 
     logger.warning(f"{user.log} Tried to renew, but no matching plan found")
@@ -171,6 +216,7 @@ async def on_purchase_type_select(
     gateways = await payment_gateway_dao.get_active()
     dialog_manager.dialog_data["purchase_type"] = purchase_type
     dialog_manager.dialog_data.pop(CURRENT_DURATION_KEY, None)
+    dialog_manager.dialog_data.pop(CURRENT_DEVICE_LIMIT_KEY, None)
     dialog_manager.dialog_data.pop(PAYMENT_CACHE_KEY, None)
 
     if not plans:
@@ -195,7 +241,10 @@ async def on_purchase_type_select(
         logger.info(f"{user.log} Auto-selected single plan '{plans[0].id}'")
         dialog_manager.dialog_data[PlanDto.__name__] = retort.dump(plans[0])
         dialog_manager.dialog_data["only_single_plan"] = True
-        await dialog_manager.switch_to(state=Subscription.DURATION)
+        _select_default_device_limit(dialog_manager, plans[0])
+        await dialog_manager.switch_to(
+            state=(Subscription.DEVICES if plans[0].has_device_selection else Subscription.DURATION)
+        )
         return
 
     dialog_manager.dialog_data["only_single_plan"] = False
@@ -229,6 +278,7 @@ async def on_subscription_plans(  # noqa: C901
     dialog_manager.dialog_data["purchase_type"] = purchase_type
 
     dialog_manager.dialog_data.pop(CURRENT_DURATION_KEY, None)
+    dialog_manager.dialog_data.pop(CURRENT_DEVICE_LIMIT_KEY, None)
     dialog_manager.dialog_data.pop(PAYMENT_CACHE_KEY, None)
 
     if not plans:
@@ -253,6 +303,11 @@ async def on_subscription_plans(  # noqa: C901
         logger.info(f"{user.log} Auto-selected single plan '{plans[0].id}'")
         dialog_manager.dialog_data[PlanDto.__name__] = retort.dump(plans[0])
         dialog_manager.dialog_data["only_single_plan"] = True
+
+        _select_default_device_limit(dialog_manager, plans[0])
+        if plans[0].has_device_selection:
+            await dialog_manager.switch_to(state=Subscription.DEVICES)
+            return
 
         if len(plans[0].durations) == 1:
             logger.info(f"{user.log} Auto-selected duration '{plans[0].durations[0].days}'")
@@ -316,11 +371,54 @@ async def on_plan_select(
     dialog_manager.dialog_data.pop(PAYMENT_CACHE_KEY, None)
     dialog_manager.dialog_data.pop(CURRENT_DURATION_KEY, None)
     dialog_manager.dialog_data.pop(CURRENT_METHOD_KEY, None)
+    dialog_manager.dialog_data.pop(CURRENT_DEVICE_LIMIT_KEY, None)
+
+    _select_default_device_limit(dialog_manager, plan)
+    if plan.has_device_selection:
+        await dialog_manager.switch_to(state=Subscription.DEVICES)
+        return
 
     if len(plan.durations) == 1:
         logger.info(f"{user.log} Auto-selected single duration '{plan.durations[0].days}'")
         dialog_manager.dialog_data["only_single_duration"] = True
         await on_duration_select(callback, widget, dialog_manager, plan.durations[0].days)  # type:ignore[no-untyped-call]
+        return
+
+    dialog_manager.dialog_data["only_single_duration"] = False
+    await dialog_manager.switch_to(state=Subscription.DURATION)
+
+
+@inject
+async def on_device_limit_select(
+    callback: CallbackQuery,
+    widget: Select,
+    dialog_manager: DialogManager,
+    selected_device_limit: int,
+    retort: FromDishka[Retort],
+) -> None:
+    user: TelegramUserDto = dialog_manager.middleware_data[USER_KEY]
+    raw_plan = dialog_manager.dialog_data.get(PlanDto.__name__)
+    if not raw_plan:
+        logger.error("PlanDto not found in dialog data")
+        await dialog_manager.start(state=Subscription.MAIN)
+        return
+
+    plan = retort.load(raw_plan, PlanDto)
+    selected = plan.resolve_device_limit(selected_device_limit)
+    dialog_manager.dialog_data[CURRENT_DEVICE_LIMIT_KEY] = selected
+    dialog_manager.dialog_data.pop(PAYMENT_CACHE_KEY, None)
+    dialog_manager.dialog_data.pop(CURRENT_DURATION_KEY, None)
+    dialog_manager.dialog_data.pop(CURRENT_METHOD_KEY, None)
+    logger.info(f"{user.log} Selected subscription device limit '{selected}'")
+
+    if len(plan.durations) == 1:
+        dialog_manager.dialog_data["only_single_duration"] = True
+        await on_duration_select(  # type: ignore[no-untyped-call]
+            callback,
+            widget,
+            dialog_manager,
+            plan.durations[0].days,
+        )
         return
 
     dialog_manager.dialog_data["only_single_duration"] = False
@@ -360,10 +458,16 @@ async def on_duration_select(
     settings = await settings_dao.get()
     gateways = await payment_gateway_dao.get_active()
     currency = settings.default_currency
-    price = pricing_service.calculate(
+    selected_device_limit = plan.resolve_device_limit(
+        dialog_manager.dialog_data.get(CURRENT_DEVICE_LIMIT_KEY)
+    )
+    price = pricing_service.calculate_for_duration(
         user,
-        price=duration.get_price(currency),
-        currency=currency,
+        duration,
+        currency,
+        apply_discount=not plan.is_trial,
+        base_device_limit=plan.device_limit,
+        selected_device_limit=selected_device_limit,
     )
     dialog_manager.dialog_data["is_free"] = price.is_free
 
@@ -373,7 +477,12 @@ async def on_duration_select(
 
         purchase_type: PurchaseType = dialog_manager.dialog_data["purchase_type"]
         cache = _load_payment_data(dialog_manager)
-        cache_key = _get_cache_key(selected_duration, selected_payment_method, purchase_type)
+        cache_key = _get_cache_key(
+            selected_duration,
+            selected_payment_method,
+            purchase_type,
+            selected_device_limit,
+        )
 
         if cache_key in cache:
             logger.info(f"{user.log} Re-selected same duration and single gateway")
@@ -423,8 +532,22 @@ async def on_payment_method_select(
     selected_duration = dialog_manager.dialog_data[CURRENT_DURATION_KEY]
     dialog_manager.dialog_data[CURRENT_METHOD_KEY] = selected_payment_method
     purchase_type: PurchaseType = dialog_manager.dialog_data["purchase_type"]
+    raw_plan = dialog_manager.dialog_data.get(PlanDto.__name__)
+    if not raw_plan:
+        logger.error("PlanDto not found in dialog data")
+        await dialog_manager.start(state=Subscription.MAIN)
+        return
+    plan = retort.load(raw_plan, PlanDto)
+    selected_device_limit = plan.resolve_device_limit(
+        dialog_manager.dialog_data.get(CURRENT_DEVICE_LIMIT_KEY)
+    )
     cache = _load_payment_data(dialog_manager)
-    cache_key = _get_cache_key(selected_duration, selected_payment_method, purchase_type)
+    cache_key = _get_cache_key(
+        selected_duration,
+        selected_payment_method,
+        purchase_type,
+        selected_device_limit,
+    )
 
     if cache_key in cache:
         logger.info(f"{user.log} Re-selected same method and duration")
@@ -433,15 +556,6 @@ async def on_payment_method_select(
         return
 
     logger.info(f"{user.log} New combination. Creating new payment")
-
-    raw_plan = dialog_manager.dialog_data.get(PlanDto.__name__)
-
-    if not raw_plan:
-        logger.error("PlanDto not found in dialog data")
-        await dialog_manager.start(state=Subscription.MAIN)
-        return
-
-    plan = retort.load(raw_plan, PlanDto)
 
     payment_data = await _create_payment_and_get_data(
         dialog_manager=dialog_manager,

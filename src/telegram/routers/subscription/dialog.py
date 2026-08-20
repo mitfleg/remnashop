@@ -14,6 +14,7 @@ from src.telegram.widgets.kbd import Button, Column, Group, Row, Select, SwitchT
 
 from .getters import (
     confirm_getter,
+    device_limit_getter,
     duration_getter,
     getter_connect,
     payment_method_getter,
@@ -23,6 +24,7 @@ from .getters import (
     success_payment_getter,
 )
 from .handlers import (
+    on_device_limit_select,
     on_duration_select,
     on_get_subscription,
     on_payment_method_select,
@@ -114,6 +116,38 @@ plans = Window(
     getter=plans_getter,
 )
 
+devices = Window(
+    Banner(BannerName.SUBSCRIPTION),
+    I18nFormat(
+        "msg-subscription-devices",
+        base_device_limit=F["base_device_limit"],
+        max_device_limit=F["max_device_limit"],
+    ),
+    Group(
+        Select(
+            text=I18nFormat("btn-subscription.devices-choice", count=F["item"]),
+            id=f"{PAYMENT_PREFIX}select_devices",
+            item_id_getter=lambda item: item,
+            items="device_options",
+            type_factory=int,
+            on_click=on_device_limit_select,
+        ),
+        width=3,
+    ),
+    Row(
+        SwitchTo(
+            text=I18nFormat("btn-subscription.back-plans"),
+            id=f"{PAYMENT_PREFIX}back_plans",
+            state=Subscription.PLANS,
+            when=~F["only_single_plan"],
+        ),
+    ),
+    *back_main_menu_button,
+    IgnoreUpdate(),
+    state=Subscription.DEVICES,
+    getter=device_limit_getter,
+)
+
 duration = Window(
     Banner(BannerName.SUBSCRIPTION),
     I18nFormat("msg-subscription-duration"),
@@ -137,10 +171,16 @@ duration = Window(
     ),
     Row(
         SwitchTo(
+            text=I18nFormat("btn-subscription.back-devices"),
+            id=f"{PAYMENT_PREFIX}back_devices",
+            state=Subscription.DEVICES,
+            when=F["has_device_selection"],
+        ),
+        SwitchTo(
             text=I18nFormat("btn-subscription.back-plans"),
             id=f"{PAYMENT_PREFIX}back_plans",
             state=Subscription.PLANS,
-            when=~F["only_single_plan"],
+            when=~F["has_device_selection"] & ~F["only_single_plan"],
         ),
     ),
     *back_main_menu_button,
@@ -300,6 +340,7 @@ router = Dialog(
     promocode_window,
     plan,
     plans,
+    devices,
     duration,
     payment_method,
     confirm,

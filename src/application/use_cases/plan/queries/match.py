@@ -27,11 +27,16 @@ class MatchPlan(Interactor[MatchPlanDto, Optional[PlanDto]]):
         return None
 
     def _is_plan_equal(self, snapshot: PlanSnapshotDto, plan: PlanDto) -> bool:
+        device_limit_matches = (
+            plan.device_limit <= snapshot.device_limit <= plan.max_device_limit
+            if plan.has_device_selection
+            else snapshot.device_limit == plan.device_limit
+        )
         return (
             snapshot.id == plan.id
             and snapshot.type == plan.type
             and snapshot.traffic_limit == plan.traffic_limit
-            and snapshot.device_limit == plan.device_limit
+            and device_limit_matches
             and snapshot.traffic_limit_strategy == plan.traffic_limit_strategy
             and sorted(snapshot.internal_squads) == sorted(plan.internal_squads)
             and snapshot.external_squad == plan.external_squad

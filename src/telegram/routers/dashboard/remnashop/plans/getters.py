@@ -116,6 +116,7 @@ async def configurator_getter(
         "is_edit": dialog_manager.dialog_data.get("is_edit", False),
         "is_unlimited_traffic": plan.is_unlimited_traffic,
         "is_unlimited_devices": plan.is_unlimited_devices,
+        "has_device_selection": plan.has_device_selection,
         "plan_type": plan.type,
         "availability_type": plan.availability,
         "plan_url": f"{await bot_service.get_plan_url(plan.public_code)}"
@@ -234,15 +235,23 @@ async def prices_getter(
     return {
         "duration": selected_duration,
         "prices": prices_data,
+        "has_device_selection": plan.has_device_selection,
     }
 
 
-async def price_getter(dialog_manager: DialogManager, **kwargs: Any) -> dict[str, Any]:
+@inject
+async def price_getter(
+    dialog_manager: DialogManager,
+    retort: FromDishka[Retort],
+    **kwargs: Any,
+) -> dict[str, Any]:
     selected_duration = dialog_manager.dialog_data.get("selected_duration")
     selected_currency = dialog_manager.dialog_data.get("selected_currency")
+    plan = retort.load(dialog_manager.dialog_data[PlanDto.__name__], PlanDto)
     return {
         "duration": selected_duration,
         "currency": selected_currency,
+        "has_device_selection": plan.has_device_selection,
     }
 
 

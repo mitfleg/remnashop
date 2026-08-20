@@ -110,6 +110,28 @@ async def plans_getter(
 
 
 @inject
+async def device_limit_getter(
+    dialog_manager: DialogManager,
+    retort: FromDishka[Retort],
+    **kwargs: Any,
+) -> dict[str, Any]:
+    raw_plan = dialog_manager.dialog_data.get(PlanDto.__name__)
+    if not raw_plan:
+        raise UnknownIntent("PlanDto not found in subscription dialog data")
+
+    plan = retort.load(raw_plan, PlanDto)
+    if not plan.has_device_selection:
+        raise ValueError(f"Plan '{plan.name}' does not support device selection")
+
+    return {
+        "base_device_limit": plan.device_limit,
+        "max_device_limit": plan.max_device_limit,
+        "device_options": list(range(plan.device_limit, plan.max_device_limit + 1)),
+        "only_single_plan": dialog_manager.dialog_data.get("only_single_plan", False),
+    }
+
+
+@inject
 async def duration_getter(
     dialog_manager: DialogManager,
     user: TelegramUserDto,
@@ -127,13 +149,23 @@ async def duration_getter(
     plan = retort.load(raw_plan, PlanDto)
     settings = await settings_dao.get()
     currency = settings.default_currency
+    selected_device_limit = plan.resolve_device_limit(
+        dialog_manager.dialog_data.get("selected_device_limit")
+    )
     only_single_plan = dialog_manager.dialog_data.get("only_single_plan", False)
     dialog_manager.dialog_data["is_free"] = False
     durations = []
 
     for duration in plan.durations:
         key, kw = i18n_format_days(duration.days)
-        price = pricing_service.calculate(user, duration.get_price(currency), currency)
+        price = pricing_service.calculate_for_duration(
+            user,
+            duration,
+            currency,
+            apply_discount=not plan.is_trial,
+            base_device_limit=plan.device_limit,
+            selected_device_limit=selected_device_limit,
+        )
         durations.append(
             {
                 "days": duration.days,
@@ -151,13 +183,14 @@ async def duration_getter(
         "plan": i18n.get(plan.name),
         "description": i18n.get(plan.description) if plan.description else False,
         "type": plan.type,
-        "devices": i18n_format_device_limit(plan.device_limit),
+        "devices": i18n_format_device_limit(selected_device_limit),
         "traffic": i18n_format_traffic_limit(plan.traffic_limit),
         "durations": durations,
         "period": 0,
         "final_amount": 0,
         "currency": "",
         "only_single_plan": only_single_plan,
+        "has_device_selection": plan.has_device_selection,
         "discount_percent": pricing_service.get_effective_discount(user),
         "is_personal_discount": pricing_service.is_largest_discount_personal(user),
         "plan_is_modified": plan_is_modified,
@@ -182,6 +215,9 @@ async def payment_method_getter(
     plan = retort.load(raw_plan, PlanDto)
     gateways = await payment_gateway_dao.get_active()
     selected_duration = dialog_manager.dialog_data["selected_duration"]
+    selected_device_limit = plan.resolve_device_limit(
+        dialog_manager.dialog_data.get("selected_device_limit")
+    )
     only_single_duration = dialog_manager.dialog_data.get("only_single_duration", False)
     duration = plan.get_duration(selected_duration)
 
@@ -190,9 +226,13 @@ async def payment_method_getter(
 
     payment_methods = []
     for gateway in gateways:
-        raw_price = duration.get_price(gateway.currency)
-        price = pricing_service.calculate(
-            user, raw_price, gateway.currency, apply_discount=not plan.is_trial
+        price = pricing_service.calculate_for_duration(
+            user,
+            duration,
+            gateway.currency,
+            apply_discount=not plan.is_trial,
+            base_device_limit=plan.device_limit,
+            selected_device_limit=selected_device_limit,
         )
         payment_methods.append(
             {
@@ -213,7 +253,7 @@ async def payment_method_getter(
         "plan": i18n.get(plan.name),
         "description": i18n.get(plan.description) if plan.description else False,
         "type": plan.type,
-        "devices": i18n_format_device_limit(plan.device_limit),
+        "devices": i18n_format_device_limit(selected_device_limit),
         "traffic": i18n_format_traffic_limit(plan.traffic_limit),
         "period": i18n.get(key, **kw),
         "payment_methods": payment_methods,
@@ -245,6 +285,9 @@ async def confirm_getter(
 
     plan = retort.load(raw_plan, PlanDto)
     selected_duration = dialog_manager.dialog_data["selected_duration"]
+    selected_device_limit = plan.resolve_device_limit(
+        dialog_manager.dialog_data.get("selected_device_limit")
+    )
     only_single_duration = dialog_manager.dialog_data.get("only_single_duration", False)
     only_single_plan = dialog_manager.dialog_data.get("only_single_plan", False)
     is_free = dialog_manager.dialog_data.get("is_free", False)
@@ -273,7 +316,7 @@ async def confirm_getter(
         "plan": i18n.get(plan.name),
         "description": i18n.get(plan.description) if plan.description else False,
         "type": plan.type,
-        "devices": i18n_format_device_limit(plan.device_limit),
+        "devices": i18n_format_device_limit(selected_device_limit),
         "traffic": i18n_format_traffic_limit(plan.traffic_limit),
         "period": i18n.get(key, **kw),
         "payment_method": selected_payment_method,

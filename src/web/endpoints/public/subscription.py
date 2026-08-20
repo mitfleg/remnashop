@@ -497,12 +497,27 @@ async def extend_subscription(
     if not gateway:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Gateway not found")
 
-    pricing = pricing_service.calculate(
+    try:
+        selected_device_limit = matched_plan.resolve_device_limit(
+            current_subscription.device_limit
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Current device limit is not available for this plan",
+        ) from e
+    pricing = pricing_service.calculate_for_duration(
         user,
-        duration.get_price(gateway.currency),
+        duration,
         gateway.currency,
+        base_device_limit=matched_plan.device_limit,
+        selected_device_limit=selected_device_limit,
     )
-    plan_snapshot = PlanSnapshotDto.from_plan(matched_plan, duration.days)
+    plan_snapshot = PlanSnapshotDto.from_plan(
+        matched_plan,
+        duration.days,
+        device_limit=selected_device_limit,
+    )
     payment = await create_payment(
         user,
         CreatePaymentDto(

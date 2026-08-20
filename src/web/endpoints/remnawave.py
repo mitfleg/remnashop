@@ -1,3 +1,4 @@
+import json
 from typing import cast
 
 from dishka import FromDishka
@@ -17,6 +18,7 @@ from src.application.events import ErrorEvent
 from src.application.services import RemnaWebhookService
 from src.core.config import AppConfig
 from src.core.constants import API_V1, REMNAWAVE_WEBHOOK_PATH
+from src.infrastructure.services.remnawave_v3_compat import prepare_webhook_payload
 
 router = APIRouter(prefix=API_V1, include_in_schema=False)
 
@@ -28,13 +30,23 @@ async def _process_remnawave_webhook(
     event_publisher: EventPublisher,
 ) -> Response:
     try:
-        raw_body = await request.body()
-        logger.debug(f"Received Remnawave webhook raw body: '{raw_body.decode('utf-8')[:500]}'")
+        raw_text = (await request.body()).decode("utf-8")
+        webhook_secret = config.remnawave.webhook_secret.get_secret_value()
+        headers = dict(request.headers)
+
+        if not WebhookUtility.validate_webhook_with_headers(
+            body=raw_text,
+            headers=headers,
+            webhook_secret=webhook_secret,
+        ):
+            raise ValueError("Invalid Remnawave webhook signature")
+
+        prepared_body = prepare_webhook_payload(json.loads(raw_text))
         payload = WebhookUtility.parse_webhook(
-            body=raw_body.decode("utf-8"),
-            headers=dict(request.headers),
-            webhook_secret=config.remnawave.webhook_secret.get_secret_value(),
-            validate=True,
+            body=prepared_body,
+            headers=headers,
+            webhook_secret=webhook_secret,
+            validate=False,
         )
     except Exception as e:
         logger.exception(f"Webhook validation failed with error '{e}'")

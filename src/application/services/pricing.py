@@ -74,6 +74,8 @@ class PricingService:
         duration: PlanDurationDto,
         currency: Currency,
         apply_discount: bool = True,
+        base_device_limit: int = 0,
+        selected_device_limit: int | None = None,
     ) -> PriceDetailsDto:
         discount = self.get_effective_discount(user) if apply_discount else 0
 
@@ -85,9 +87,15 @@ class PricingService:
             )
             return self.calculate(user, fallback, currency, apply_discount=apply_discount)
 
-        return self.calculate(
-            user, duration.get_price(currency), currency, apply_discount=apply_discount
+        selected_limit = (
+            base_device_limit if selected_device_limit is None else selected_device_limit
         )
+        raw_price = duration.get_price_for_devices(
+            currency,
+            base_device_limit=base_device_limit,
+            selected_device_limit=selected_limit,
+        )
+        return self.calculate(user, raw_price, currency, apply_discount=apply_discount)
 
     def parse_price(self, input_price: str, currency: Currency) -> Decimal:
         logger.debug(f"Parsing input price '{input_price}' for currency '{currency}'")
@@ -105,6 +113,17 @@ class PricingService:
         final_price = self.apply_currency_rules(price, currency)
         logger.debug(f"Parsed price '{final_price}' after applying currency rules")
         return final_price
+
+    def parse_unit_price(self, input_price: str) -> Decimal:
+        """Parse a unit surcharge without rounding XTR/RUB before multiplication."""
+        try:
+            price = Decimal(input_price.strip())
+        except InvalidOperation:
+            raise ValueError(f"Invalid numeric format provided for price: '{input_price}'")
+
+        if price < 0:
+            raise ValueError(f"Negative price provided: '{input_price}'")
+        return price.quantize(Decimal("0.0001")).normalize()
 
     def apply_currency_rules(self, amount: Decimal, currency: Currency) -> Decimal:
         logger.debug(f"Applying currency rules for amount '{amount}' and currency '{currency}'")

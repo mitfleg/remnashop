@@ -157,7 +157,12 @@ class PlanDaoImpl(PlanDao):
         new_durations = []
         for d_dto in plan.durations:
             new_prices = [
-                PlanPrice(currency=p_dto.currency, price=p_dto.price) for p_dto in d_dto.prices
+                PlanPrice(
+                    currency=p_dto.currency,
+                    price=p_dto.price,
+                    extra_device_price=p_dto.extra_device_price,
+                )
+                for p_dto in d_dto.prices
             ]
 
             new_durations.append(
