@@ -35,6 +35,35 @@ WHERE pp.plan_duration_id = pd.id
   AND pp.currency = catalog_price.currency
   AND p.name = 'Premium';
 
+-- Bachata VPN: тот же размер доплаты за устройство, что и у Premium.
+-- Для дополнительных сроков 3 и 15 дней доплата рассчитана пропорционально 30 дням.
+UPDATE plan_prices AS pp
+SET extra_device_price = catalog_price.extra_device_price
+FROM plan_durations AS pd
+JOIN plans AS p ON p.id = pd.plan_id
+JOIN (
+    VALUES
+        (3, 'RUB'::currency, 10.0000::numeric),
+        (3, 'XTR'::currency, 5.0000::numeric),
+        (3, 'USD'::currency, 0.1425::numeric),
+        (7, 'RUB'::currency, 25.0000::numeric),
+        (7, 'XTR'::currency, 12.5000::numeric),
+        (7, 'USD'::currency, 0.3250::numeric),
+        (15, 'RUB'::currency, 50.0000::numeric),
+        (15, 'XTR'::currency, 25.0000::numeric),
+        (15, 'USD'::currency, 0.7125::numeric),
+        (30, 'RUB'::currency, 100.0000::numeric),
+        (30, 'XTR'::currency, 50.0000::numeric),
+        (30, 'USD'::currency, 1.4250::numeric),
+        (90, 'RUB'::currency, 300.0000::numeric),
+        (90, 'XTR'::currency, 150.0000::numeric),
+        (90, 'USD'::currency, 4.0000::numeric)
+) AS catalog_price(days, currency, extra_device_price)
+    ON catalog_price.days = pd.days
+WHERE pp.plan_duration_id = pd.id
+  AND pp.currency = catalog_price.currency
+  AND p.name = 'Bachata VPN';
+
 UPDATE plan_prices AS pp
 SET price = catalog_price.price
 FROM plan_durations AS pd
