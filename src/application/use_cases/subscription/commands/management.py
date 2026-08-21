@@ -189,6 +189,7 @@ class UpdateDeviceLimit(Interactor[UpdateDeviceLimitDto, None]):
                 user=target_user,
                 uuid=subscription.user_remna_id,
                 subscription=subscription,
+                trim_excess_devices=True,
             )
             await self.uow.commit()
 

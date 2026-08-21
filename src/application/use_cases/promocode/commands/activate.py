@@ -234,6 +234,7 @@ class ActivatePromocode(Interactor[ActivatePromocodeDto, PromocodeDto]):
                 uuid=subscription.user_remna_id,
                 plan=plan,
                 reset_traffic=True,
+                trim_excess_devices=True,
             )
             # Keep the local subscription in sync with the new plan pushed to the
             # panel; otherwise the DB keeps stale limits/expiry and later updates

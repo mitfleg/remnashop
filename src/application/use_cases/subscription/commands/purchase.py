@@ -181,6 +181,7 @@ class PurchaseSubscription(Interactor[PurchaseSubscriptionDto, None]):
                     uuid=subscription.user_remna_id,
                     subscription=subscription,
                     reset_traffic=True,
+                    trim_excess_devices=True,
                 )
 
                 subscription.plan_snapshot = plan
@@ -208,6 +209,7 @@ class PurchaseSubscription(Interactor[PurchaseSubscriptionDto, None]):
                     uuid=subscription.user_remna_id,
                     plan=plan,
                     reset_traffic=True,
+                    trim_excess_devices=True,
                 )
 
                 new_sub = self._build_subscription_dto(updated_user, plan)

@@ -30,6 +30,7 @@ from src.application.dto import (
     SubscriptionDto,
     UserDto,
 )
+from src.application.services.device_selection import select_excess_devices
 from src.core.constants import REMNAWAVE_MIN_VERSION
 from src.core.enums import SubscriptionStatus
 from src.core.utils.converters import days_to_datetime, gb_to_bytes
@@ -106,6 +107,7 @@ class RemnawaveImpl(Remnawave):
         plan: Optional[PlanSnapshotDto] = None,
         subscription: Optional[SubscriptionDto] = None,
         reset_traffic: bool = False,
+        trim_excess_devices: bool = False,
     ) -> UserResponseDto:
         request_dto = self._build_update_request(user, uuid, plan, subscription)
 
@@ -120,6 +122,9 @@ class RemnawaveImpl(Remnawave):
                 f"RemnaUser '{request_dto.username}' with UUID '{request_dto.uuid}' not found"
             )
             raise
+
+        if trim_excess_devices:
+            await self._trim_excess_devices(uuid, request_dto.hwid_device_limit)
 
         if reset_traffic:
             await self.reset_traffic(uuid)
@@ -191,7 +196,7 @@ class RemnawaveImpl(Remnawave):
                 DeleteUserHwidDeviceRequestDto(user_uuid=user_uuid, hwid=hwid_uuid)
             )
             logger.info(
-                f"Deleted HWID device '{hwid_uuid}' for RemnaUser '{user_uuid}'. "
+                f"Deleted HWID device for RemnaUser '{user_uuid}'. "
                 f"Total devices now: {response.total}"
             )
         except NotFoundError:
@@ -199,6 +204,54 @@ class RemnawaveImpl(Remnawave):
             return None
 
         return int(response.total)
+
+    async def _trim_excess_devices(
+        self,
+        user_uuid: UUID,
+        device_limit: Optional[int],
+    ) -> None:
+        if not device_limit or device_limit < 1:
+            return
+
+        try:
+            devices = await self.get_devices(user_uuid)
+        except Exception as error:
+            logger.error(
+                f"Failed to fetch HWID devices before trimming RemnaUser '{user_uuid}' "
+                f"to limit '{device_limit}': {error}"
+            )
+            return
+
+        devices_to_delete = select_excess_devices(devices, device_limit)
+        if not devices_to_delete:
+            return
+
+        excess_count = len(devices_to_delete)
+        deleted_count = 0
+
+        for device in devices_to_delete:
+            try:
+                remaining_devices = await self.delete_device(user_uuid, device.hwid)
+            except Exception as error:
+                logger.error(
+                    f"Failed to trim an inactive HWID device for RemnaUser '{user_uuid}' "
+                    f"to limit '{device_limit}': {error}"
+                )
+                continue
+
+            if remaining_devices is not None:
+                deleted_count += 1
+
+        if deleted_count == excess_count:
+            logger.info(
+                f"Trimmed '{deleted_count}' inactive HWID devices for RemnaUser "
+                f"'{user_uuid}' to limit '{device_limit}'"
+            )
+        else:
+            logger.error(
+                f"Incomplete HWID trim for RemnaUser '{user_uuid}': deleted "
+                f"'{deleted_count}' of '{excess_count}' devices for limit '{device_limit}'"
+            )
 
     async def delete_all_devices(self, user_uuid: UUID) -> None:
         try:

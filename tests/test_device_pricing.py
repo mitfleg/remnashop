@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -21,6 +21,7 @@ from src.application.services import (
     PricingService,
     parse_device_limit_input,
     resolve_initial_device_limit,
+    select_excess_devices,
 )
 from src.application.use_cases.gateways.commands.payment import CreatePayment, CreatePaymentDto
 from src.application.use_cases.plan.commands.edit import (
@@ -30,6 +31,10 @@ from src.application.use_cases.plan.commands.edit import (
     UpdatePlanPriceDto,
 )
 from src.application.use_cases.plan.queries.match import MatchPlan
+from src.application.use_cases.subscription.commands.management import (
+    UpdateDeviceLimit,
+    UpdateDeviceLimitDto,
+)
 from src.application.use_cases.subscription.commands.purchase import (
     PurchaseSubscription,
     PurchaseSubscriptionDto,
@@ -108,6 +113,54 @@ def test_continue_defaults_to_base_but_renewal_keeps_paid_limit() -> None:
     assert resolve_initial_device_limit(plan) == 4
     assert resolve_initial_device_limit(plan, preferred=8) == 8
     assert resolve_initial_device_limit(plan, preferred=21) == 4
+
+
+def make_devices(count: int) -> list[SimpleNamespace]:
+    now = datetime.now(timezone.utc)
+    return [
+        SimpleNamespace(
+            hwid=f"device-{index}",
+            created_at=now - timedelta(days=count - index),
+            updated_at=now - timedelta(hours=count - index),
+        )
+        for index in range(count)
+    ]
+
+
+def test_excess_device_selection_keeps_most_recent_activity() -> None:
+    removed = select_excess_devices(make_devices(10), device_limit=4)
+
+    assert [device.hwid for device in removed] == [
+        "device-0",
+        "device-1",
+        "device-2",
+        "device-3",
+        "device-4",
+        "device-5",
+    ]
+
+
+@pytest.mark.parametrize("device_limit", [0, 10, 20])
+def test_excess_device_selection_does_not_remove_when_limit_allows_all(
+    device_limit: int,
+) -> None:
+    assert select_excess_devices(make_devices(10), device_limit) == []
+
+
+def test_excess_device_selection_uses_stable_tiebreakers() -> None:
+    timestamp = datetime.now(timezone.utc)
+    devices = [
+        SimpleNamespace(
+            hwid=hwid,
+            created_at=timestamp + timedelta(minutes=created_offset),
+            updated_at=timestamp,
+        )
+        for hwid, created_offset in (("device-b", 1), ("device-a", 0), ("device-c", 2))
+    ]
+
+    removed = select_excess_devices(devices, device_limit=1)
+
+    assert [device.hwid for device in removed] == ["device-a", "device-b"]
 
 
 def test_device_price_is_added_before_discount() -> None:
@@ -337,7 +390,42 @@ async def test_renewal_keeps_paid_limit_and_updates_subscription_snapshot() -> N
     assert subscription.expire_at == old_expire + timedelta(days=30)
     remnawave.update_user.assert_awaited_once()
     assert remnawave.update_user.await_args.kwargs["subscription"].device_limit == 8
+    assert remnawave.update_user.await_args.kwargs["trim_excess_devices"] is True
     subscription_dao.update.assert_awaited_once_with(subscription)
+
+
+@pytest.mark.asyncio
+async def test_manual_device_limit_change_requests_excess_device_trim() -> None:
+    plan = PlanSnapshotDto.from_plan(make_plan(), duration=30, device_limit=8)
+    user = UserDto(id=1, telegram_id=100, name="Test")
+    subscription = SubscriptionDto(
+        id=1,
+        user_id=user.id,
+        user_remna_id=uuid4(),
+        status=SubscriptionStatus.ACTIVE,
+        traffic_limit=plan.traffic_limit,
+        device_limit=plan.device_limit,
+        traffic_limit_strategy=plan.traffic_limit_strategy,
+        expire_at=datetime_now() + timedelta(days=30),
+        url="https://example.test/sub",
+        plan_snapshot=plan,
+    )
+    remnawave = SimpleNamespace(update_user=AsyncMock())
+    subscription_dao = SimpleNamespace(
+        get_current=AsyncMock(return_value=subscription),
+        update=AsyncMock(),
+    )
+    update_limit = UpdateDeviceLimit(
+        uow=FakeUnitOfWork(),
+        user_dao=SimpleNamespace(get_by_id=AsyncMock(return_value=user)),
+        subscription_dao=subscription_dao,
+        remnawave=remnawave,
+    )
+
+    await update_limit.system(UpdateDeviceLimitDto(user_id=user.id, device_limit=4))
+
+    assert subscription.device_limit == 4
+    assert remnawave.update_user.await_args.kwargs["trim_excess_devices"] is True
 
 
 @pytest.mark.asyncio

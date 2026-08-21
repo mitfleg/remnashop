@@ -53,6 +53,7 @@ class SetUserSubscription(Interactor[SetUserSubscriptionDto, None]):
                     uuid=subscription.user_remna_id,
                     plan=plan_snapshot,
                     reset_traffic=True,
+                    trim_excess_devices=True,
                 )
                 await self.subscription_dao.update_status(
                     subscription_id=subscription.id,
