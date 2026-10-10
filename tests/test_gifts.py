@@ -10,15 +10,32 @@ from unittest.mock import AsyncMock, Mock, patch
 from uuid import uuid4
 
 import pytest
+from aiogram import Bot, Dispatcher, F
 from aiogram.exceptions import TelegramForbiddenError
 from aiogram.methods import SendMessage
-from aiogram.types import Chat, Message, SharedUser, UsersShared
+from aiogram.types import (
+    CallbackQuery,
+    Chat,
+    InlineKeyboardMarkup,
+    Message,
+    SharedUser,
+    Update,
+    UsersShared,
+)
+from aiogram.types import (
+    User as TelegramUser,
+)
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
+from dishka import Provider, Scope, from_context, make_async_container
+from dishka.integrations.aiogram import setup_dishka
+from redis.asyncio import Redis
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
+from src.application.common import TranslatorRunner
+from src.application.common.dao import PaymentGatewayDao
 from src.application.dto import (
     PlanDto,
     PlanDurationDto,
@@ -71,7 +88,12 @@ with patch.object(
     from src.infrastructure.services.gifts import GiftError, GiftRecipient, GiftService
     from src.infrastructure.services.remnawave import RemnawaveImpl
     from src.telegram.routers.extra.payment import on_pre_checkout, on_successful_payment
-    from src.telegram.routers.gifts import on_recipient, picker_key, start_picker
+    from src.telegram.routers.gifts import (
+        on_gift_callback,
+        on_recipient,
+        picker_key,
+        start_picker,
+    )
 
 
 def plan():
@@ -661,3 +683,99 @@ async def test_migration_round_trip_keeps_ordinary_payments(store):
         payment = await svc.transactions.get_by_payment_id(ordinary.payment_id)
         assert payment.status == TransactionStatus.COMPLETED and payment.gift_id is None
         assert payment.pricing == ordinary.pricing
+
+
+@pytest.mark.parametrize("action", ["plan", "duration", "pay"])
+async def test_gift_buttons_resolve_dependencies_through_dispatcher(action):
+    class Dependencies(Provider):
+        scope = Scope.APP
+        gifts = from_context(provides=GiftService)
+        gateways = from_context(provides=PaymentGatewayDao)
+        create_payment = from_context(provides=CreatePayment)
+        redis = from_context(provides=Redis)
+        translator = from_context(provides=TranslatorRunner)
+
+    user = TelegramUserDto(id=1, telegram_id=123, name="Buyer")
+    snapshot = PlanSnapshotDto.from_plan(plan(), 30)
+    pricing = PriceDetailsDto(
+        original_amount=Decimal(300), discount_percent=0, final_amount=Decimal(300)
+    )
+    gifts = SimpleNamespace(
+        get=AsyncMock(
+            return_value=SimpleNamespace(
+                id=7, recipient_name="Recipient", recipient_telegram_id=222
+            )
+        ),
+        transaction=AsyncMock(return_value=None),
+        available_plans=AsyncMock(return_value=[plan()]),
+        quote=AsyncMock(return_value=(snapshot, pricing)),
+        card=AsyncMock(return_value=("Счёт готов", InlineKeyboardMarkup(inline_keyboard=[]))),
+        session=SimpleNamespace(rollback=AsyncMock()),
+    )
+    gateway = SimpleNamespace(
+        type=PaymentGatewayType.YOOKASSA, currency=Currency.RUB, settings=None
+    )
+    create_payment = AsyncMock()
+    i18n = SimpleNamespace(
+        get=Mock(
+            side_effect=lambda key, **kw: {"Premium": "Премиум", "gateway-type": "ЮKassa"}[key]
+        )
+    )
+    container = make_async_container(
+        Dependencies(),
+        context={
+            GiftService: gifts,
+            PaymentGatewayDao: SimpleNamespace(get_active=AsyncMock(return_value=[gateway])),
+            CreatePayment: create_payment,
+            Redis: SimpleNamespace(),
+            TranslatorRunner: i18n,
+        },
+    )
+    dispatcher = Dispatcher()
+    dispatcher.callback_query.register(on_gift_callback, F.data.startswith("gift:"))
+    setup_dishka(container, dispatcher)
+    bot = Bot("123456:TEST_TOKEN")
+    payload = {
+        "plan": "gift:plan:7:5",
+        "duration": "gift:duration:7:5:30",
+        "pay": "gift:pay:7:5:30:YOOKASSA",
+    }[action]
+    update = Update(
+        update_id=1,
+        callback_query=CallbackQuery(
+            id="gift-button",
+            from_user=TelegramUser(id=123, is_bot=False, first_name="Buyer"),
+            chat_instance="gift-test",
+            data=payload,
+            message=Message(message_id=1, date=0, chat=Chat(id=123, type="private")),
+        ),
+    )
+    try:
+        with (
+            patch.object(CallbackQuery, "answer", new_callable=AsyncMock) as answer,
+            patch.object(Bot, "send_message", new_callable=AsyncMock) as send,
+        ):
+            await dispatcher.feed_update(
+                bot, update, user=user, dialog_manager=SimpleNamespace()
+            )
+            answer.assert_awaited_once()
+            send.assert_awaited_once()
+            message = send.call_args.args[1]
+            rows = send.call_args.kwargs["reply_markup"].inline_keyboard
+            if action == "plan":
+                assert "Премиум" in message and rows[0][0].callback_data == "gift:duration:7:5:30"
+            elif action == "duration":
+                assert "Recipient" in message and "222" in message
+                assert rows[0][0].text == "ЮKassa · 300 ₽"
+                assert rows[0][0].callback_data == "gift:pay:7:5:30:YOOKASSA"
+            else:
+                create_payment.assert_awaited_once()
+                actor, checkout = create_payment.call_args.args
+                assert actor == user and checkout.gift_id == 7
+                assert checkout.plan_snapshot == snapshot and checkout.pricing == pricing
+                assert checkout.gateway_type == PaymentGatewayType.YOOKASSA
+                gifts.card.assert_awaited_once_with(user, 7)
+            gifts.session.rollback.assert_not_awaited()
+    finally:
+        await container.close()
+        await bot.session.close()
