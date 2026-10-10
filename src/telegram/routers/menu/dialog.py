@@ -54,10 +54,13 @@ custom_buttons = (
     build_buttons_row(3, text_on_click=on_text_button_click),
 )
 
+connect_mini_app_button, connect_reserve_button, connect_page_button = connect_buttons
+
 menu = Window(
     Banner(BannerName.MENU),
     I18nFormat("msg-main-menu"),
-    *connect_buttons,
+    connect_mini_app_button,
+    connect_page_button,
     Row(
         Button(
             text=I18nFormat("btn-menu.connect-not-available"),
@@ -66,6 +69,15 @@ menu = Window(
         ),
         when=F["has_subscription"] & ~F["connectable"],
     ),
+    Row(
+        Button(
+            I18nFormat("btn-gift.new"),
+            id="gift_new",
+            on_click=on_gift_start,
+            style=Style(ButtonStyle.SUCCESS),
+        ),
+    ),
+    connect_reserve_button,
     Row(
         Button(
             text=I18nFormat("btn-menu.trial"),
@@ -96,7 +108,6 @@ menu = Window(
         ),
     ),
     Row(
-        Button(I18nFormat("btn-gift.new"), id="gift_new", on_click=on_gift_start),
         Button(I18nFormat("btn-gift.history"), id="gift_history", on_click=on_gift_history),
     ),
     Row(
