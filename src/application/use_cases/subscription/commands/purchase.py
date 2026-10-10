@@ -174,7 +174,8 @@ class PurchaseSubscription(Interactor[PurchaseSubscriptionDto, None]):
                 subscription.traffic_limit_strategy = plan.traffic_limit_strategy
                 subscription.tag = plan.tag
                 subscription.internal_squads = plan.internal_squads
-                subscription.external_squad = plan.external_squad
+                if plan.external_squad is not None:
+                    subscription.external_squad = plan.external_squad
 
                 await self.remnawave.update_user(
                     user=user,

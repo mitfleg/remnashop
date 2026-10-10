@@ -11,6 +11,7 @@ from src.infrastructure.common import json
 from src.telegram.filters import setup_global_filters
 from src.telegram.message_manager import MessageManager
 from src.telegram.middlewares import setup_middlewares
+from src.telegram.middlewares.media_album import MediaAlbumMiddleware
 from src.telegram.middlewares.user import UserMiddleware
 from src.telegram.routers import setup_routers
 
@@ -29,6 +30,7 @@ def get_dispatcher(config: AppConfig) -> Dispatcher:
     )
 
     dispatcher = Dispatcher(storage=storage, config=config)
+    dispatcher.update.outer_middleware(MediaAlbumMiddleware())
     logger.info("Initialized Dispatcher with Redis storage")
     return dispatcher
 

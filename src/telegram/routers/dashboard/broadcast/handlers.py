@@ -1,4 +1,3 @@
-import html
 from typing import Any, Optional
 from uuid import UUID
 
@@ -15,7 +14,12 @@ from loguru import logger
 
 from src.application.common import BotService, Notifier, TranslatorRunner
 from src.application.common.dao import BroadcastDao, SettingsDao
-from src.application.dto import MediaDescriptorDto, MessagePayloadDto, TelegramUserDto
+from src.application.dto import (
+    AlbumMediaDto,
+    MediaDescriptorDto,
+    MessagePayloadDto,
+    TelegramUserDto,
+)
 from src.application.use_cases.broadcast.commands.lifecycle import (
     CancelBroadcast,
     DeleteBroadcast,
@@ -146,6 +150,25 @@ async def on_plan_select(
     await dialog_manager.switch_to(state=DashboardBroadcast.SEND)
 
 
+def _extract_media(message: Message, *, single: bool) -> Optional[AlbumMediaDto]:
+    if message.photo:
+        kind, file_id = MediaType.PHOTO, message.photo[-1].file_id
+    elif message.video:
+        kind, file_id = MediaType.VIDEO, message.video.file_id
+    elif message.animation and single:
+        kind, file_id = MediaType.GIF, message.animation.file_id
+    elif message.document:
+        kind, file_id = MediaType.DOCUMENT, message.document.file_id
+    elif message.sticker and single:
+        kind, file_id = MediaType.DOCUMENT, message.sticker.file_id
+    else:
+        return None
+    return AlbumMediaDto(
+        media=MediaDescriptorDto(kind="file_id", value=file_id),
+        media_type=kind,
+    )
+
+
 @inject
 async def on_content_input(
     message: Message,
@@ -157,35 +180,41 @@ async def on_content_input(
     dialog_manager.show_mode = ShowMode.EDIT
     user: TelegramUserDto = dialog_manager.middleware_data[USER_KEY]
 
-    media_type: Optional[MediaType] = None
-    file_id: Optional[str] = None
+    messages: list[Message] = dialog_manager.middleware_data.get("media_album", [message])
+    media_items: list[AlbumMediaDto] = []
+    captions = [item for item in messages if item.text or item.caption]
+    caption_message = captions[0] if captions else message
+    plain_text = caption_message.text or caption_message.caption or ""
 
-    if message.photo:
-        media_type = MediaType.PHOTO
-        file_id = message.photo[-1].file_id
-    elif message.video:
-        media_type = MediaType.VIDEO
-        file_id = message.video.file_id
-    elif message.animation:
-        media_type = MediaType.GIF
-        file_id = message.animation.file_id
-    elif message.document:
-        media_type = MediaType.DOCUMENT
-        file_id = message.document.file_id
-    elif message.sticker:
-        media_type = MediaType.DOCUMENT
-        file_id = message.sticker.file_id
+    for item in messages:
+        media = _extract_media(item, single=len(messages) == 1)
+        if media is None:
+            if len(messages) > 1:
+                await notifier.notify_user(user, i18n_key="ntf-broadcast.album-invalid")
+                return
+            continue
+        media_items.append(media)
 
-    if not (message.html_text or file_id):
-        logger.warning(f"{user.log} Provided invalid or empty content")
+    if (
+        len(media_items) > 10
+        or len(captions) > 1
+        or (
+            len(media_items) > 1
+            and any(item.media_type == MediaType.DOCUMENT for item in media_items)
+            and not all(item.media_type == MediaType.DOCUMENT for item in media_items)
+        )
+    ):
+        await notifier.notify_user(user, i18n_key="ntf-broadcast.album-invalid")
+        return
+    if not (plain_text or media_items):
         await notifier.notify_user(user, i18n_key="ntf-common.invalid-value")
         return
 
-    max_length = TEXT_MEDIA_MAX_LENGTH if file_id else TEXT_MAX_LENGTH
-    if message.html_text and len(message.html_text) > max_length:
-        logger.warning(
-            f"{user.log} Message text exceeds limit: '{len(message.html_text)}' > '{max_length}'"
-        )
+    # Telegram limits the actual text, not serialized HTML/custom-emoji tags.
+    max_length = TEXT_MEDIA_MAX_LENGTH if media_items else TEXT_MAX_LENGTH
+    text_length = len(plain_text.encode("utf-16-le")) // 2
+    if text_length > max_length:
+        logger.warning(f"{user.log} Message text exceeds limit: '{text_length}' > '{max_length}'")
         await notifier.notify_user(
             user,
             MessagePayloadDto(
@@ -195,15 +224,17 @@ async def on_content_input(
         )
         return
 
+    # Keep escaped HTML intact; unescape would turn literal < and & into markup.
+    single = media_items[0] if len(media_items) == 1 else None
     _update_payload(
         dialog_manager,
         retort,
-        i18n_kwargs={"content": html.unescape(message.html_text)},
-        media_type=media_type,
-        media=retort.dump(MediaDescriptorDto(kind="file_id", value=file_id)) if file_id else None,
+        i18n_kwargs={"content": caption_message.html_text},
+        media_type=single.media_type if single else None,
+        media=retort.dump(single.media) if single else None,
+        album=retort.dump(media_items, list[AlbumMediaDto]) if len(media_items) > 1 else [],
     )
-
-    logger.info(f"{user.log} Updated message payload (content only)")
+    logger.info(f"{user.log} Updated message payload ({len(media_items)} media items)")
     await notifier.notify_user(user, i18n_key="ntf-broadcast.content-saved")
 
 
@@ -258,11 +289,16 @@ async def on_preview(
     user: TelegramUserDto = dialog_manager.middleware_data[USER_KEY]
     payload = dialog_manager.dialog_data.get("payload")
 
-    if not payload or not payload["i18n_kwargs"].get("content") and not payload.get("media"):
+    if (
+        not payload
+        or not payload["i18n_kwargs"].get("content")
+        and not payload.get("media")
+        and not payload.get("album")
+    ):
         await notifier.notify_user(user, i18n_key="ntf-broadcast.content-empty")
         return
 
-    await notifier.notify_user(user, payload=retort.load(payload, MessagePayloadDto))
+    await notifier.notify_broadcast(user, retort.load(payload, MessagePayloadDto))
 
 
 @inject
@@ -281,7 +317,7 @@ async def on_view_preview(
         await notifier.notify_user(user, i18n_key="ntf-broadcast.content-empty")
         return
 
-    await notifier.notify_user(user, payload=broadcast.payload)
+    await notifier.notify_broadcast(user, broadcast.payload)
 
 
 @inject

@@ -140,6 +140,7 @@ class BroadcastDaoImpl(BroadcastDao):
                 "id": msg.id,
                 "status": msg.status,
                 "message_id": msg.message_id,
+                "message_ids": msg.message_ids,
             }
             for msg in messages
         ]

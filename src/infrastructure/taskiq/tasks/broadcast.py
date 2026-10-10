@@ -8,6 +8,7 @@ from loguru import logger
 
 from src.application.common import Notifier
 from src.application.common.dao import BroadcastDao
+from src.application.common.notifier import PartialBroadcastDeliveryError
 from src.application.dto import BroadcastDto, BroadcastMessageDto, MessagePayloadDto, UserDto
 from src.application.use_cases.broadcast.commands.lifecycle import (
     FinishBroadcast,
@@ -85,20 +86,24 @@ async def send_broadcast_task(  # noqa: C901
         async def send_one(user: UserDto) -> tuple:
             nonlocal total_retry_time
             status = BroadcastMessageStatus.FAILED
-            msg_id = None
+            msg_ids: list[int] = []
             retry_time_for_user = 0.0
 
             while True:
                 try:
                     async with semaphore:
-                        tg_message = await notifier.notify_user(user, payload=broadcast.payload)
+                        tg_messages = await notifier.notify_broadcast(user, broadcast.payload)
 
-                    if tg_message:
+                    if tg_messages:
                         status = BroadcastMessageStatus.SENT
-                        msg_id = tg_message.message_id
+                        msg_ids = [message.message_id for message in tg_messages]
 
-                    return user.id, user.telegram_id, status, msg_id, retry_time_for_user
+                    return user.id, user.telegram_id, status, msg_ids, retry_time_for_user
 
+                except PartialBroadcastDeliveryError as error:
+                    msg_ids = [message.message_id for message in error.messages]
+                    logger.error(f"Partially delivered broadcast to {user.log}")
+                    return user.id, user.telegram_id, status, msg_ids, retry_time_for_user
                 except TelegramRetryAfter as error:
                     wait_time = error.retry_after + BATCH_DELAY
                     logger.warning(f"Flood wait {error.retry_after}s for user {user.log}")
@@ -107,7 +112,7 @@ async def send_broadcast_task(  # noqa: C901
                     total_retry_time += wait_time
                 except Exception:
                     logger.exception(f"Failed to send to {user.log}")
-                    return user.id, user.telegram_id, status, msg_id, retry_time_for_user
+                    return user.id, user.telegram_id, status, msg_ids, retry_time_for_user
 
         for i, batch in enumerate(chunked(users, BATCH_SIZE_20), start=1):
             # Check cancellation every batch (a single cheap SELECT) so a cancel request
@@ -129,9 +134,10 @@ async def send_broadcast_task(  # noqa: C901
                         user_id=uid,
                         user_telegram_id=tg_id,
                         status=status,
-                        message_id=msg_id,
+                        message_id=msg_ids[0] if msg_ids else None,
+                        message_ids=msg_ids,
                     )
-                    for uid, tg_id, status, msg_id, _ in results
+                    for uid, tg_id, status, msg_ids, _ in results
                 ],
             )
 
@@ -217,8 +223,8 @@ async def delete_broadcast_task(
         retry_time_for_msg = 0.0
 
         if (
-            message.status not in (BroadcastMessageStatus.SENT, BroadcastMessageStatus.EDITED)
-            or not message.message_id
+            message.status == BroadcastMessageStatus.DELETED
+            or not (message.message_ids or message.message_id)
             or not message.user_telegram_id
         ):
             return message, retry_time_for_msg
@@ -227,9 +233,8 @@ async def delete_broadcast_task(
         while True:
             try:
                 async with semaphore:
-                    if await bot.delete_message(
-                        chat_id=user_telegram_id, message_id=message.message_id
-                    ):
+                    ids = message.message_ids or [cast(int, message.message_id)]
+                    if await bot.delete_messages(chat_id=user_telegram_id, message_ids=ids):
                         message.status = BroadcastMessageStatus.DELETED
 
                 return message, retry_time_for_msg

@@ -402,6 +402,45 @@ async def test_renewal_keeps_paid_limit_and_updates_subscription_snapshot() -> N
 
 
 @pytest.mark.asyncio
+async def test_renewal_does_not_clear_existing_external_squad() -> None:
+    current_plan = PlanSnapshotDto.from_plan(make_plan(), duration=30, device_limit=8)
+    renewed_plan = PlanSnapshotDto.from_plan(make_plan(), duration=30, device_limit=8)
+    external_squad = uuid4()
+    user = UserDto(id=1, telegram_id=100, name="Test")
+    subscription = SubscriptionDto(
+        id=1,
+        user_id=user.id,
+        user_remna_id=uuid4(),
+        status=SubscriptionStatus.ACTIVE,
+        is_trial=False,
+        traffic_limit=current_plan.traffic_limit,
+        device_limit=current_plan.device_limit,
+        traffic_limit_strategy=current_plan.traffic_limit_strategy,
+        external_squad=external_squad,
+        expire_at=datetime_now() + timedelta(days=10),
+        url="https://example.test/sub",
+        plan_snapshot=current_plan,
+    )
+    transaction = make_transaction(renewed_plan, PurchaseType.RENEW)
+    remnawave = SimpleNamespace(create_user=AsyncMock(), update_user=AsyncMock())
+    subscription_dao = SimpleNamespace(create=AsyncMock(), update=AsyncMock())
+    purchase = PurchaseSubscription(
+        uow=FakeUnitOfWork(),
+        user_dao=SimpleNamespace(
+            set_trial_available=AsyncMock(),
+            update=AsyncMock(),
+        ),
+        subscription_dao=subscription_dao,
+        remnawave=remnawave,
+    )
+
+    await purchase.system(PurchaseSubscriptionDto(user, transaction, subscription))
+
+    assert subscription.external_squad == external_squad
+    assert remnawave.update_user.await_args.kwargs["subscription"].external_squad == external_squad
+
+
+@pytest.mark.asyncio
 async def test_manual_device_limit_change_requests_excess_device_trim() -> None:
     plan = PlanSnapshotDto.from_plan(make_plan(), duration=30, device_limit=8)
     user = UserDto(id=1, telegram_id=100, name="Test")

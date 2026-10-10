@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import json
 import string
 import traceback
 from dataclasses import asdict
@@ -18,15 +19,20 @@ from aiogram.types import (
     FSInputFile,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    InputMediaDocument,
+    InputMediaPhoto,
+    InputMediaVideo,
     Message,
     ReplyKeyboardMarkup,
 )
 from aiogram.utils.formatting import Text
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from loguru import logger
+from redis.asyncio import Redis
 
 from src.application.common import EventPublisher, Notifier, TranslatorHub
 from src.application.common.dao import SettingsDao, UserDao
+from src.application.common.notifier import PartialBroadcastDeliveryError
 from src.application.dto import (
     MediaDescriptorDto,
     MessagePayloadDto,
@@ -60,7 +66,7 @@ from src.application.events.user import (
     UserNotConnectedEvent,
 )
 from src.core.config import AppConfig
-from src.core.enums import Locale, Role
+from src.core.enums import Locale, MediaType, Role
 from src.core.types import AnyKeyboard, NotificationType
 from src.infrastructure.services.event_bus import on_event
 from src.infrastructure.services.notification_queue import NotificationWorker
@@ -86,6 +92,7 @@ class NotificationService(Notifier):
         settings_dao: SettingsDao,
         worker: NotificationWorker,
         event_publisher: EventPublisher,
+        redis: Redis,
     ) -> None:
         self.bot = bot
         self.config = config
@@ -94,6 +101,7 @@ class NotificationService(Notifier):
         self.settings_dao = settings_dao
         self.worker = worker
         self.event_publisher = event_publisher
+        self.redis = redis
 
     async def notify_user(
         self,
@@ -110,6 +118,93 @@ class NotificationService(Notifier):
             )
 
         return await self._send_message(user, payload)
+
+    async def notify_broadcast(
+        self,
+        user: Union[TempUserDto, UserDto],
+        payload: MessagePayloadDto,
+    ) -> list[Message]:
+        if not payload.album:
+            message = await self.notify_user(user, payload)
+            return [message] if message else []
+        if user.telegram_id is None:
+            return []
+        if not 2 <= len(payload.album) <= 10:
+            raise ValueError("A Telegram album must contain 2 to 10 items")
+        media = self._build_album(user, payload)
+        reply_markup = self._prepare_reply_markup(
+            payload.reply_markup,
+            payload.disable_default_markup,
+            payload.delete_after,
+            user.language,
+            user.telegram_id,
+        )
+        try:
+            messages = await self.bot.send_media_group(
+                chat_id=user.telegram_id,
+                media=media,
+                disable_notification=payload.disable_notification,
+            )
+        except TelegramForbiddenError:
+            return []
+
+        if reply_markup:
+            # sendMediaGroup has no reply_markup parameter. Keep actions in a linked message.
+            try:
+                actions = await self.bot.send_message(
+                    chat_id=user.telegram_id,
+                    text=self._get_translated_text(user.language, "ntf-broadcast.album-actions"),
+                    reply_markup=reply_markup,
+                    reply_to_message_id=messages[0].message_id,
+                    disable_notification=payload.disable_notification,
+                )
+                messages.append(actions)
+                await self.redis.set(
+                    f"notification_album:{user.telegram_id}:{actions.message_id}",
+                    json.dumps([item.message_id for item in messages]),
+                    ex=7 * 24 * 3600,
+                )
+            except Exception as error:
+                # The worker must record the already delivered IDs, never resend the album.
+                raise PartialBroadcastDeliveryError(messages) from error
+        if payload.delete_after:
+            for message in messages:
+                asyncio.create_task(
+                    self._schedule_message_deletion(
+                        chat_id=user.telegram_id,
+                        message_id=message.message_id,
+                        delay=payload.delete_after,
+                    )
+                )
+        return messages
+
+    def _build_album(
+        self,
+        user: Union[TempUserDto, UserDto],
+        payload: MessagePayloadDto,
+    ) -> list[Union[InputMediaPhoto, InputMediaVideo, InputMediaDocument]]:
+        render_kwargs = payload.i18n_kwargs.copy()
+        if isinstance(user, UserDto) and payload.i18n_key == "raw-message":
+            render_kwargs = {**asdict(user), **render_kwargs}
+        text = self._get_translated_text(user.language, payload.i18n_key, render_kwargs)
+        media_classes = {
+            MediaType.PHOTO: InputMediaPhoto,
+            MediaType.VIDEO: InputMediaVideo,
+            MediaType.DOCUMENT: InputMediaDocument,
+        }
+        media = []
+        for index, item in enumerate(payload.album):
+            media_class = media_classes.get(item.media_type)
+            if media_class is None:
+                raise ValueError("Unsupported album media type")
+            media.append(
+                media_class(
+                    media=self._build_media(item.media),
+                    caption=text if index == 0 else None,
+                    parse_mode="HTML",
+                )
+            )
+        return media
 
     async def notify_admins(
         self,
@@ -317,7 +412,13 @@ class NotificationService(Notifier):
 
     async def delete_notification(self, chat_id: int, message_id: int) -> None:
         try:
-            await self.bot.delete_message(chat_id=chat_id, message_id=message_id)
+            album_key = f"notification_album:{chat_id}:{message_id}"
+            album_ids = await self.redis.get(album_key)
+            if album_ids:
+                await self.bot.delete_messages(chat_id=chat_id, message_ids=json.loads(album_ids))
+                await self.redis.delete(album_key)
+            else:
+                await self.bot.delete_message(chat_id=chat_id, message_id=message_id)
             logger.debug(f"Notification '{message_id}' for chat '{chat_id}' deleted")
         except Exception as e:
             logger.error(f"Failed to delete notification '{message_id}': {e}")
