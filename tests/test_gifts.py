@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, Mock, patch
 from uuid import uuid4
 
 import pytest
-from aiogram import Bot, Dispatcher, F
+from aiogram import Bot, Dispatcher, F, Router
 from aiogram.client.session.base import BaseSession
 from aiogram.exceptions import TelegramForbiddenError
 from aiogram.filters import Command
@@ -31,6 +31,7 @@ from aiogram.types import (
     User as TelegramUser,
 )
 from aiogram_dialog import Dialog, ShowMode, StartMode, Window, setup_dialogs
+from aiogram_dialog.api.internal import CONTEXT_KEY
 from aiogram_dialog.widgets.text import Const
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
@@ -88,7 +89,7 @@ with patch.object(
         SyncRemnaUser,
         SyncRemnaUserDto,
     )
-    from src.core.constants import CONFIG_KEY, USER_KEY
+    from src.core.constants import CONFIG_KEY, CONTAINER_KEY, USER_KEY
     from src.infrastructure.database.dao.subscription import SubscriptionDaoImpl
     from src.infrastructure.database.dao.transaction import TransactionDaoImpl
     from src.infrastructure.database.dao.user import UserDaoImpl
@@ -100,6 +101,7 @@ with patch.object(
     from src.infrastructure.services.remnawave import RemnawaveImpl
     from src.infrastructure.services.translator import TranslatorHubImpl
     from src.telegram.routers import gifts as handlers
+    from src.telegram.routers import setup_routers
     from src.telegram.routers.extra.payment import on_pre_checkout, on_successful_payment
     from src.telegram.routers.gifts import (
         on_gift_callback,
@@ -1057,4 +1059,60 @@ async def test_native_gift_dialog_edits_one_message_through_picker_checkout_and_
         ) == "Главное меню" and session.last_menu.message_id == original_id
     finally:
         await container.close()
+        await bot.session.close()
+
+
+async def test_start_command_exits_gift_picker_with_production_router_order():
+    dispatcher = Dispatcher()
+    root = Router()
+    include = root.include_routers
+    # Use production registration order while keeping global routers reusable by other tests.
+    with patch.object(
+        root, "include_routers", side_effect=lambda *rs: include(*(copy.deepcopy(r) for r in rs))
+    ):
+        setup_routers(root)
+    dispatcher.include_router(root)
+    user = TelegramUserDto(id=1, telegram_id=123, name="Buyer")
+    bot = Bot("123456:TEST_TOKEN")
+    gift_bot = SimpleNamespace(
+        id=bot.id,
+        send_message=AsyncMock(return_value=SimpleNamespace(message_id=78)),
+        delete_message=AsyncMock(),
+    )
+    redis = SimpleNamespace(getdel=AsyncMock(return_value=b"77"), delete=AsyncMock())
+    gifts = SimpleNamespace(bot=gift_bot, list_for=AsyncMock(return_value=[]))
+    container = SimpleNamespace(
+        get=AsyncMock(
+            side_effect=lambda cls: {
+                GiftService: gifts,
+                Redis: redis,
+            }[cls]
+        )
+    )
+    manager = SimpleNamespace(middleware_data={CONTAINER_KEY: container}, start=AsyncMock())
+    try:
+        await dispatcher.feed_update(
+            bot,
+            Update(
+                update_id=1,
+                message=Message(
+                    message_id=1,
+                    date=0,
+                    chat=Chat(id=123, type="private"),
+                    from_user=TelegramUser(id=123, is_bot=False, first_name="Buyer"),
+                    text="/start",
+                ),
+            ),
+            user=user,
+            dialog_manager=manager,
+            **{CONTEXT_KEY: SimpleNamespace(state=Gifts.PICKER)},
+        )
+        manager.start.assert_awaited_once_with(
+            state=MainMenu.MAIN,
+            mode=StartMode.RESET_STACK,
+            show_mode=ShowMode.DELETE_AND_SEND,
+        )
+        assert gift_bot.send_message.call_args.kwargs["reply_markup"].remove_keyboard
+        assert [c.args[1] for c in gift_bot.delete_message.call_args_list] == [77, 78]
+    finally:
         await bot.session.close()
