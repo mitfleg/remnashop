@@ -246,7 +246,7 @@ async def on_gift_callback(  # noqa: C901
     create_payment: FromDishka[CreatePayment],
     redis: FromDishka[Redis],
     bot: Bot,
-    i18n: TranslatorRunner,
+    i18n: FromDishka[TranslatorRunner],
     dialog_manager: DialogManager,
 ) -> None:
     await callback.answer()
