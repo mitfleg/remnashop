@@ -1,6 +1,6 @@
 import asyncio
 from dataclasses import fields, is_dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Optional, Union
 from uuid import UUID
 
@@ -169,6 +169,17 @@ class RemnawaveImpl(Remnawave):
         except NotFoundError:
             logger.debug(f"RemnaUser '{uuid}' not found in panel")
             return None
+
+    async def get_user_by_username(self, username: str) -> Optional[UserResponseDto]:
+        try:
+            return await self.sdk.users.get_user_by_username(username)
+        except NotFoundError:
+            return None
+
+    async def set_user_expiry(self, uuid: UUID, expire_at: datetime) -> UserResponseDto:
+        return await self.sdk.users.update_user(
+            UpdateUserRequestDto(uuid=uuid, expire_at=expire_at)
+        )
 
     async def get_users_by_telegram_id(self, telegram_id: int) -> list[UserResponseDto]:
         response = await self.sdk.users.get_users_by_telegram_id(telegram_id)
