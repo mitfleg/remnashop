@@ -65,7 +65,7 @@ async def on_start_dialog(user: TelegramUserDto, dialog_manager: DialogManager) 
                 inline_keyboard=[
                     [
                         InlineKeyboardButton(
-                            text="Полученные подарки", callback_data="gift:list:received:0"
+                            text="📥 Полученные подарки", callback_data="gift:list:received:0"
                         ),
                     ]
                 ]

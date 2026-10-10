@@ -17,6 +17,15 @@ class Notification(StatesGroup):
     CLOSE = State()
 
 
+class Gifts(StatesGroup):
+    PICKER = State()
+    RECIPIENT = State()
+    DURATION = State()
+    PAYMENT_METHOD = State()
+    CARD = State()
+    HISTORY = State()
+
+
 class Subscription(StatesGroup):
     MAIN = State()
     PROMOCODE = State()

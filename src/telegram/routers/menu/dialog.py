@@ -2,7 +2,7 @@ from aiogram.enums import ButtonStyle
 from aiogram_dialog import Dialog, StartMode
 from aiogram_dialog.widgets.input import MessageInput
 from aiogram_dialog.widgets.style import Style
-from aiogram_dialog.widgets.text import Const, Format
+from aiogram_dialog.widgets.text import Format
 from magic_filter import F
 
 from src.application.common.policy import Permission
@@ -96,8 +96,8 @@ menu = Window(
         ),
     ),
     Row(
-        Button(Const("🎁 Подарить VPN"), id="gift_new", on_click=on_gift_start),
-        Button(Const("Мои подарки"), id="gift_history", on_click=on_gift_history),
+        Button(I18nFormat("btn-gift.new"), id="gift_new", on_click=on_gift_start),
+        Button(I18nFormat("btn-gift.history"), id="gift_history", on_click=on_gift_history),
     ),
     Row(
         Button(
