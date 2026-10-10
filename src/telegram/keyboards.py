@@ -165,6 +165,13 @@ def get_broadcast_buttons(support_url: str, is_referral_enable: bool) -> list[In
             )
         )
 
+    buttons.append(
+        InlineKeyboardButton(
+            text="btn-gift.new",
+            callback_data="gift:new",
+            style=ButtonStyle.SUCCESS,
+        )
+    )
     buttons.append(get_close_notification_button())
 
     return buttons
