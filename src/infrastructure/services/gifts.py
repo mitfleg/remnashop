@@ -415,10 +415,16 @@ class GiftService:
                 and payment.confirmation_url
                 and is_buyer
             ):
-                rows.append([InlineKeyboardButton(text="Оплатить", url=payment.confirmation_url)])
+                rows.append(
+                    [InlineKeyboardButton(text="💳 Оплатить", url=payment.confirmation_url)]
+                )
         else:
             rows.append(
-                [InlineKeyboardButton(text="Выбрать тариф", callback_data=f"gift:plans:{gift.id}")]
+                [
+                    InlineKeyboardButton(
+                        text="🗓 Выбрать количество дней", callback_data=f"gift:plans:{gift.id}"
+                    )
+                ]
             )
         if gift.issued_at and payment and payment.status == TransactionStatus.COMPLETED:
             local = (
@@ -428,7 +434,7 @@ class GiftService:
             )
             if local and local.user_remna_id == gift.remna_uuid:
                 text.append(f"\nСсылка подключения:\n<code>{escape(local.url)}</code>")
-                rows.append([InlineKeyboardButton(text="Открыть подписку", url=local.url)])
+                rows.append([InlineKeyboardButton(text="🔗 Открыть подписку", url=local.url)])
             if is_buyer:
                 me = await self.bot.get_me()
                 invitation = f"https://t.me/{me.username}?start=gift_{gift.token.hex}"
@@ -441,7 +447,7 @@ class GiftService:
                         ),
                     }
                 )
-                rows.append([InlineKeyboardButton(text="Отправить подарок", url=share)])
+                rows.append([InlineKeyboardButton(text="📩 Отправить подарок", url=share)])
                 text.append(
                     "\nПопросите получателя открыть бота и нажать «Старт». "
                     "Подарок и ссылка сохранятся в «Мои подарки»."
@@ -453,9 +459,14 @@ class GiftService:
                 )
         rows.extend(
             [
-                [InlineKeyboardButton(text="Обновить", callback_data=f"gift:open:{gift.id}")],
-                [InlineKeyboardButton(text="Мои подарки", callback_data="gift:list:sent:0")],
-                [InlineKeyboardButton(text="Главное меню", callback_data="gift:menu")],
+                [InlineKeyboardButton(text="🔄 Обновить", callback_data=f"gift:open:{gift.id}")],
+                [
+                    InlineKeyboardButton(
+                        text="🎁 Мои подарки",
+                        callback_data=f"gift:list:{'sent' if is_buyer else 'received'}:0",
+                    )
+                ],
+                [InlineKeyboardButton(text="↩️ Главное меню", callback_data="gift:menu")],
             ]
         )
         return "\n".join(text), InlineKeyboardMarkup(inline_keyboard=rows)
@@ -490,7 +501,7 @@ class GiftService:
                         inline_keyboard=[
                             [
                                 InlineKeyboardButton(
-                                    text="Открыть подарок", callback_data=f"gift:open:{gift.id}"
+                                    text="🎁 Открыть подарок", callback_data=f"gift:open:{gift.id}"
                                 ),
                             ]
                         ]

@@ -1,0 +1,10 @@
+btn-gift =
+    .new = 🎁 Подарить VPN
+    .history = 🎁 Мои подарки
+    .recipient = 👤 Выбрать получателя
+    .change-recipient = 👤 Выбрать другого человека
+    .days = 🗓 Выбрать количество дней
+    .duration = 🗓 { $period } | { $final_amount }{ $currency }
+    .sent = 📤 Отправленные
+    .received = 📥 Полученные
+    .refresh = 🔄 Обновить

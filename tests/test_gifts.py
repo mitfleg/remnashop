@@ -1,23 +1,28 @@
 import asyncio
+import copy
 import io
 import os
 from contextlib import asynccontextmanager
 from datetime import timedelta
 from decimal import Decimal
 from importlib import import_module
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 from uuid import uuid4
 
 import pytest
 from aiogram import Bot, Dispatcher, F
+from aiogram.client.session.base import BaseSession
 from aiogram.exceptions import TelegramForbiddenError
+from aiogram.filters import Command
 from aiogram.methods import SendMessage
 from aiogram.types import (
     CallbackQuery,
     Chat,
     InlineKeyboardMarkup,
     Message,
+    PhotoSize,
     SharedUser,
     Update,
     UsersShared,
@@ -25,6 +30,8 @@ from aiogram.types import (
 from aiogram.types import (
     User as TelegramUser,
 )
+from aiogram_dialog import Dialog, ShowMode, StartMode, Window, setup_dialogs
+from aiogram_dialog.widgets.text import Const
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
 from dishka import Provider, Scope, from_context, make_async_container
@@ -52,7 +59,9 @@ from src.application.services import PricingService
 from src.core.config import AppConfig
 from src.core.enums import (
     AccessMode,
+    BannerName,
     Currency,
+    Locale,
     PaymentGatewayType,
     PlanAvailability,
     PlanType,
@@ -79,6 +88,7 @@ with patch.object(
         SyncRemnaUser,
         SyncRemnaUserDto,
     )
+    from src.core.constants import CONFIG_KEY, USER_KEY
     from src.infrastructure.database.dao.subscription import SubscriptionDaoImpl
     from src.infrastructure.database.dao.transaction import TransactionDaoImpl
     from src.infrastructure.database.dao.user import UserDaoImpl
@@ -86,7 +96,10 @@ with patch.object(
     from src.infrastructure.database.uow import UnitOfWorkImpl
     from src.infrastructure.di.providers.retort import RetortProvider
     from src.infrastructure.services.gifts import GiftError, GiftRecipient, GiftService
+    from src.infrastructure.services.i18n import LayeredFileStorage
     from src.infrastructure.services.remnawave import RemnawaveImpl
+    from src.infrastructure.services.translator import TranslatorHubImpl
+    from src.telegram.routers import gifts as handlers
     from src.telegram.routers.extra.payment import on_pre_checkout, on_successful_payment
     from src.telegram.routers.gifts import (
         on_gift_callback,
@@ -94,6 +107,10 @@ with patch.object(
         picker_key,
         start_picker,
     )
+    from src.telegram.routers.gifts_dialog import router as gift_dialog
+    from src.telegram.states import Gifts, MainMenu
+    from src.telegram.widgets import Banner
+    from src.telegram.widgets.kbd import Button
 
 
 def plan():
@@ -125,7 +142,9 @@ def settings():
 
 
 async def test_native_picker_allows_people_outside_bot_and_one_recipient():
-    bot = SimpleNamespace(id=100, send_message=AsyncMock())
+    bot = SimpleNamespace(
+        id=100, send_message=AsyncMock(return_value=SimpleNamespace(message_id=9))
+    )
     redis = SimpleNamespace(set=AsyncMock())
     user = TelegramUserDto(id=1, telegram_id=123, name="Buyer")
     await start_picker(bot, user, redis)
@@ -133,8 +152,8 @@ async def test_native_picker_allows_people_outside_bot_and_one_recipient():
     request = markup.keyboard[0][0].request_users
     assert request.user_is_bot is False and request.max_quantity == 1
     assert request.request_name and request.request_username
-    assert redis.set.call_args.args[0] == picker_key(bot.id, user.id)
-    assert redis.set.call_args.kwargs["ex"] == 900
+    assert redis.set.call_args_list[0].args[0] == picker_key(bot.id, user.id)
+    assert redis.set.call_args_list[0].kwargs["ex"] == 900
 
 
 @pytest.mark.parametrize("request_id,users", [(99, [555]), (42, [555, 666])])
@@ -149,7 +168,10 @@ async def test_stale_or_multiple_recipient_selections_never_create_gift(request_
     )
     service = SimpleNamespace(create=AsyncMock())
     bot = SimpleNamespace(id=100)
-    redis = SimpleNamespace(get=AsyncMock(return_value=b"42"))
+    redis = SimpleNamespace(
+        get=AsyncMock(return_value=b"42"), getdel=AsyncMock(return_value=None), delete=AsyncMock()
+    )
+    manager = SimpleNamespace(has_context=lambda: False, start=AsyncMock())
     with patch.object(Message, "answer", new_callable=AsyncMock):
         await on_recipient.__dishka_orig_func__(
             message,
@@ -157,6 +179,7 @@ async def test_stale_or_multiple_recipient_selections_never_create_gift(request_
             service,
             redis,
             bot,
+            manager,
         )
     service.create.assert_not_awaited()
 
@@ -354,7 +377,7 @@ async def test_new_recipient_issued_before_first_start_and_both_can_reopen(store
         for actor in [store.buyer, recipient, store.buyer]:
             body, markup = await svc.card(actor, gift_id)
             assert sub.url in body and "&lt;name&gt;" in body
-            assert "Оплатить" not in [b.text for row in markup.inline_keyboard for b in row]
+            assert not any("Оплатить" in b.text for row in markup.inline_keyboard for b in row)
         gift = await svc.get(recipient, gift_id)
         assert gift.recipient_seen_at
         outsider = await svc.users.create(
@@ -686,96 +709,352 @@ async def test_migration_round_trip_keeps_ordinary_payments(store):
 
 
 @pytest.mark.parametrize("action", ["plan", "duration", "pay"])
-async def test_gift_buttons_resolve_dependencies_through_dispatcher(action):
+async def test_old_gift_buttons_use_dialog_and_do_not_create_stale_invoices(action):
     class Dependencies(Provider):
         scope = Scope.APP
         gifts = from_context(provides=GiftService)
-        gateways = from_context(provides=PaymentGatewayDao)
-        create_payment = from_context(provides=CreatePayment)
         redis = from_context(provides=Redis)
-        translator = from_context(provides=TranslatorRunner)
 
     user = TelegramUserDto(id=1, telegram_id=123, name="Buyer")
-    snapshot = PlanSnapshotDto.from_plan(plan(), 30)
-    pricing = PriceDetailsDto(
-        original_amount=Decimal(300), discount_percent=0, final_amount=Decimal(300)
-    )
-    gifts = SimpleNamespace(
-        get=AsyncMock(
-            return_value=SimpleNamespace(
-                id=7, recipient_name="Recipient", recipient_telegram_id=222
-            )
-        ),
-        transaction=AsyncMock(return_value=None),
-        available_plans=AsyncMock(return_value=[plan()]),
-        quote=AsyncMock(return_value=(snapshot, pricing)),
-        card=AsyncMock(return_value=("Счёт готов", InlineKeyboardMarkup(inline_keyboard=[]))),
-        session=SimpleNamespace(rollback=AsyncMock()),
-    )
-    gateway = SimpleNamespace(
-        type=PaymentGatewayType.YOOKASSA, currency=Currency.RUB, settings=None
-    )
-    create_payment = AsyncMock()
-    i18n = SimpleNamespace(
-        get=Mock(
-            side_effect=lambda key, **kw: {"Premium": "Премиум", "gateway-type": "ЮKassa"}[key]
-        )
-    )
+    gifts = SimpleNamespace(get=AsyncMock(), transaction=AsyncMock(return_value=None))
     container = make_async_container(
         Dependencies(),
         context={
             GiftService: gifts,
-            PaymentGatewayDao: SimpleNamespace(get_active=AsyncMock(return_value=[gateway])),
-            CreatePayment: create_payment,
-            Redis: SimpleNamespace(),
-            TranslatorRunner: i18n,
+            Redis: SimpleNamespace(
+                getdel=AsyncMock(return_value=None),
+                delete=AsyncMock(),
+            ),
         },
     )
     dispatcher = Dispatcher()
     dispatcher.callback_query.register(on_gift_callback, F.data.startswith("gift:"))
     setup_dishka(container, dispatcher)
     bot = Bot("123456:TEST_TOKEN")
-    payload = {
-        "plan": "gift:plan:7:5",
-        "duration": "gift:duration:7:5:30",
-        "pay": "gift:pay:7:5:30:YOOKASSA",
-    }[action]
+    manager = SimpleNamespace(has_context=lambda: False, start=AsyncMock())
     update = Update(
         update_id=1,
         callback_query=CallbackQuery(
-            id="gift-button",
+            id="old-gift-button",
             from_user=TelegramUser(id=123, is_bot=False, first_name="Buyer"),
             chat_instance="gift-test",
-            data=payload,
+            data=f"gift:{action}:7:5:30:YOOKASSA",
             message=Message(message_id=1, date=0, chat=Chat(id=123, type="private")),
         ),
     )
     try:
         with (
-            patch.object(CallbackQuery, "answer", new_callable=AsyncMock) as answer,
-            patch.object(Bot, "send_message", new_callable=AsyncMock) as send,
+            patch.object(CallbackQuery, "answer", new_callable=AsyncMock),
+            patch.object(
+                Bot,
+                "send_message",
+                new_callable=AsyncMock,
+            ) as send,
         ):
-            await dispatcher.feed_update(
-                bot, update, user=user, dialog_manager=SimpleNamespace()
+            await dispatcher.feed_update(bot, update, user=user, dialog_manager=manager)
+            send.assert_not_awaited()
+            manager.start.assert_awaited_once_with(
+                Gifts.RECIPIENT,
+                data={"gift_id": 7},
+                mode=StartMode.RESET_STACK,
+                show_mode=ShowMode.EDIT,
             )
-            answer.assert_awaited_once()
-            send.assert_awaited_once()
-            message = send.call_args.args[1]
-            rows = send.call_args.kwargs["reply_markup"].inline_keyboard
-            if action == "plan":
-                assert "Премиум" in message and rows[0][0].callback_data == "gift:duration:7:5:30"
-            elif action == "duration":
-                assert "Recipient" in message and "222" in message
-                assert rows[0][0].text == "ЮKassa · 300 ₽"
-                assert rows[0][0].callback_data == "gift:pay:7:5:30:YOOKASSA"
-            else:
-                create_payment.assert_awaited_once()
-                actor, checkout = create_payment.call_args.args
-                assert actor == user and checkout.gift_id == 7
-                assert checkout.plan_snapshot == snapshot and checkout.pricing == pricing
-                assert checkout.gateway_type == PaymentGatewayType.YOOKASSA
-                gifts.card.assert_awaited_once_with(user, 7)
-            gifts.session.rollback.assert_not_awaited()
+            gifts.get.assert_awaited_once_with(user, 7, buyer_only=True)
+    finally:
+        await container.close()
+        await bot.session.close()
+
+
+@pytest.mark.parametrize("banners", [False, True])
+async def test_native_gift_dialog_edits_one_message_through_picker_checkout_and_history(banners):  # noqa: C901
+    class TelegramSession(BaseSession):
+        def __init__(self):
+            super().__init__()
+            self.calls = []
+            self.last_menu = None
+            self.next_id = 10
+
+        async def close(self):
+            pass
+
+        async def stream_content(self, *args, **kwargs):
+            yield b""
+
+        async def make_request(self, bot, method, timeout=None):
+            self.calls.append(method)
+            if method.__api_method__ == "getMe":
+                return TelegramUser(id=123456, is_bot=True, first_name="Bot", username="gift_bot")
+            if method.__api_method__ in {
+                "sendMessage",
+                "editMessageText",
+                "editMessageReplyMarkup",
+                "sendPhoto",
+                "editMessageCaption",
+                "editMessageMedia",
+            }:
+                self.next_id += 1
+                msg = Message(
+                    message_id=getattr(method, "message_id", None) or self.next_id,
+                    date=0,
+                    chat=Chat(id=123, type="private"),
+                    from_user=TelegramUser(id=123456, is_bot=True, first_name="Bot"),
+                    text=getattr(method, "text", None),
+                    caption=getattr(method, "caption", None)
+                    or getattr(getattr(method, "media", None), "caption", None),
+                    photo=[
+                        PhotoSize(file_id="banner", file_unique_id="banner", width=10, height=10)
+                    ]
+                    if method.__api_method__
+                    in {"sendPhoto", "editMessageCaption", "editMessageMedia"}
+                    else None,
+                    reply_markup=(
+                        method.reply_markup
+                        if isinstance(method.reply_markup, InlineKeyboardMarkup)
+                        else None
+                    ),
+                )
+                if msg.reply_markup:
+                    self.last_menu = msg
+                return msg
+            return True
+
+    user = TelegramUserDto(id=1, telegram_id=123, name="Buyer")
+    access = plan()
+    access.name = "Доступ"
+    access.durations.append(
+        PlanDurationDto(
+            days=90,
+            prices=[PlanPriceDto(currency=Currency.RUB, price=Decimal(700))],
+        )
+    )
+    other_plan = plan()
+    other_plan.id = 99
+    gift = SimpleNamespace(
+        id=7,
+        buyer_id=1,
+        recipient_name="Recipient",
+        recipient_telegram_id=222,
+        paid_at=None,
+        issued_at=None,
+        expire_at=None,
+        recipient_seen_at=None,
+    )
+    pricing = PriceDetailsDto(
+        original_amount=Decimal(300), discount_percent=0, final_amount=Decimal(300)
+    )
+    gifts = SimpleNamespace(
+        get=AsyncMock(return_value=gift),
+        create=AsyncMock(return_value=gift),
+        transaction=AsyncMock(return_value=None),
+        available_plans=AsyncMock(return_value=[other_plan, access]),
+        quote=AsyncMock(return_value=(PlanSnapshotDto.from_plan(access, 30), pricing)),
+        settings=SimpleNamespace(
+            get=AsyncMock(return_value=SimpleNamespace(default_currency=Currency.RUB))
+        ),
+        list_for=AsyncMock(return_value=[(gift, None)]),
+        card=AsyncMock(
+            return_value=(
+                "Счёт готов",
+                InlineKeyboardMarkup(
+                    inline_keyboard=[
+                        [{"text": "💳 Оплатить", "url": "https://example.com/invoice"}],
+                    ]
+                ),
+            )
+        ),
+        session=SimpleNamespace(rollback=AsyncMock()),
+    )
+    gateways = SimpleNamespace(
+        get_active=AsyncMock(
+            return_value=[
+                SimpleNamespace(
+                    type=PaymentGatewayType.YOOKASSA, currency=Currency.RUB, settings=None
+                ),
+                SimpleNamespace(
+                    type=PaymentGatewayType.TELEGRAM_STARS, currency=Currency.XTR, settings=None
+                ),
+                SimpleNamespace(
+                    type=PaymentGatewayType.CRYPTOMUS, currency=Currency.RUB, settings=None
+                ),
+            ]
+        )
+    )
+
+    async def pay(*args):
+        gifts.transaction.return_value = SimpleNamespace()
+
+    create_payment = AsyncMock(side_effect=pay)
+    redis_values = {}
+
+    async def redis_set(key, value, **kwargs):
+        redis_values[key] = value
+
+    async def redis_delete(key):
+        redis_values.pop(key, None)
+
+    redis = SimpleNamespace(
+        set=redis_set,
+        get=AsyncMock(side_effect=redis_values.get),
+        delete=redis_delete,
+        getdel=AsyncMock(side_effect=lambda k: redis_values.pop(k, None)),
+    )
+    retort = RetortProvider().get_retort()
+    i18n = TranslatorHubImpl(
+        {"ru": ("ru",)},
+        root_locale="ru",
+        retort=retort,
+        storage=LayeredFileStorage(
+            Path("assets/translations"), Path("assets.default/translations")
+        ),
+    ).get_translator_by_locale("ru")
+
+    class Dependencies(Provider):
+        scope = Scope.APP
+        gifts = from_context(provides=GiftService)
+        gateways = from_context(provides=PaymentGatewayDao)
+        create_payment = from_context(provides=CreatePayment)
+        redis = from_context(provides=Redis)
+        bot = from_context(provides=Bot)
+        translator = from_context(provides=TranslatorRunner)
+
+    session = TelegramSession()
+    bot = Bot("123456:TEST_TOKEN", session=session)
+    container = make_async_container(
+        Dependencies(),
+        context={
+            GiftService: gifts,
+            PaymentGatewayDao: gateways,
+            CreatePayment: create_payment,
+            Redis: redis,
+            Bot: bot,
+            TranslatorRunner: i18n,
+        },
+    )
+    dispatcher = Dispatcher()
+
+    async def start(message, dialog_manager):
+        await dialog_manager.start(MainMenu.MAIN)
+
+    dispatcher.message.register(start, Command("start"))
+    dispatcher.message.register(handlers.on_recipient, F.users_shared)
+    dispatcher.callback_query.register(handlers.on_gift_callback, F.data.startswith("gift:"))
+    menu_dialog = Dialog(
+        Window(
+            Banner(BannerName.MENU),
+            Const("Главное меню"),
+            Button(Const("🎁 Подарить VPN"), id="gift", on_click=handlers.on_gift_start),
+            state=MainMenu.MAIN,
+        )
+    )
+    dispatcher.include_routers(menu_dialog, copy.deepcopy(gift_dialog))
+    setup_dialogs(dispatcher)
+    setup_dishka(container, dispatcher)
+    config = SimpleNamespace(
+        bot=SimpleNamespace(use_banners=banners),
+        banners_dir=Path("assets/banners"),
+        default_banners_dir=Path("assets/banners"),
+        default_locale=Locale.RU,
+    )
+    telegram_user = TelegramUser(id=123, is_bot=False, first_name="Buyer")
+    update_id = 0
+
+    async def feed(**kwargs):
+        nonlocal update_id
+        update_id += 1
+        await dispatcher.feed_update(
+            bot, Update(update_id=update_id, **kwargs), **{USER_KEY: user, CONFIG_KEY: config}
+        )
+
+    async def click(label):
+        button = next(
+            b
+            for row in session.last_menu.reply_markup.inline_keyboard
+            for b in row
+            if label in b.text
+        )
+        await feed(
+            callback_query=CallbackQuery(
+                id=f"click-{update_id}",
+                from_user=telegram_user,
+                chat_instance="test",
+                data=button.callback_data,
+                message=session.last_menu,
+            )
+        )
+
+    def navigation_sends():
+        return [
+            call
+            for call in session.calls
+            if call.__api_method__ in {"sendMessage", "sendPhoto"}
+            and isinstance(call.reply_markup, InlineKeyboardMarkup)
+        ]
+
+    try:
+        await feed(
+            message=Message(
+                message_id=1,
+                date=0,
+                chat=Chat(id=123, type="private"),
+                from_user=telegram_user,
+                text="/start",
+            )
+        )
+        original_id = session.last_menu.message_id
+        await click("Подарить VPN")
+        request_id = int(redis_values[handlers.picker_key(bot.id, user.id)])
+        await feed(
+            message=Message(
+                message_id=100,
+                date=0,
+                chat=Chat(id=123, type="private"),
+                from_user=telegram_user,
+                users_shared=UsersShared(
+                    request_id=request_id,
+                    users=[SharedUser(user_id=222, first_name="Recipient")],
+                ),
+            )
+        )
+        assert "Получатель выбран" in (session.last_menu.text or session.last_menu.caption)
+        assert not redis_values
+        assert len([c for c in session.calls if c.__api_method__ == "deleteMessage"]) == 3
+        await click("Выбрать количество дней")
+        labels = [b.text for row in session.last_menu.reply_markup.inline_keyboard for b in row]
+        assert any("30 дн." in label for label in labels)
+        assert any("90 дн." in label for label in labels)
+        assert all("Premium" not in label and label != "Доступ" for label in labels)
+        assert all(call.args[2] == access.id for call in gifts.quote.call_args_list)
+        await click("90 дн.")
+        assert "90 дн." in (session.last_menu.text or session.last_menu.caption)
+        labels = [b.text for row in session.last_menu.reply_markup.inline_keyboard for b in row]
+        assert any("⭐ Telegram Stars" in label for label in labels)
+        assert any("💳 ЮKassa" in label for label in labels)
+        assert all("Cryptomus" not in label for label in labels)
+        await click("Изменить длительность")
+        await click("30 дн.")
+        await click("ЮKassa")
+        assert (session.last_menu.text or session.last_menu.caption) == "Счёт готов"
+        assert create_payment.call_args.args[1].gift_id == 7
+        assert create_payment.call_args.args[1].gateway_type == PaymentGatewayType.YOOKASSA
+        await click("Обновить")
+        await click("Мои подарки")
+        await click("Полученные")
+        gifts.list_for.assert_awaited_with(user, received=True, offset=0)
+        await click("Отправленные")
+        await click("Recipient")
+        create_payment.assert_awaited_once()
+        assert session.last_menu.message_id == original_id
+        assert len(navigation_sends()) == 1  # Only the initial menu; every later screen is edited.
+        edit_ids = {
+            call.message_id
+            for call in session.calls
+            if call.__api_method__ in {"editMessageText", "editMessageCaption", "editMessageMedia"}
+        }
+        assert edit_ids == {original_id}
+        await click("Главное меню")
+        assert (
+            session.last_menu.text or session.last_menu.caption
+        ) == "Главное меню" and session.last_menu.message_id == original_id
     finally:
         await container.close()
         await bot.session.close()
