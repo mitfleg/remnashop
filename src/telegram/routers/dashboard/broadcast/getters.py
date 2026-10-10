@@ -58,20 +58,20 @@ async def buttons_getter(
     buttons = dialog_manager.dialog_data.get("buttons", [])
     settings = await settings_dao.get()
 
-    if not buttons:
-        all_buttons = get_broadcast_buttons(
-            support_url=bot_service.get_support_url(text=i18n.get("message.help")),
-            is_referral_enable=settings.referral.enable,
-        )
-        buttons = [
-            {
-                "id": CLOSE_BUTTON_ID if index == len(all_buttons) - 1 else index,
-                "text": btn.text,
-                "selected": index == len(all_buttons) - 1,
-            }
-            for index, btn in enumerate(all_buttons)
-        ]
-        dialog_manager.dialog_data["buttons"] = buttons
+    selected_by_text = {button["text"]: button.get("selected", False) for button in buttons}
+    all_buttons = get_broadcast_buttons(
+        support_url=bot_service.get_support_url(text=i18n.get("message.help")),
+        is_referral_enable=settings.referral.enable,
+    )
+    buttons = [
+        {
+            "id": CLOSE_BUTTON_ID if index == len(all_buttons) - 1 else index,
+            "text": btn.text,
+            "selected": selected_by_text.get(btn.text, index == len(all_buttons) - 1),
+        }
+        for index, btn in enumerate(all_buttons)
+    ]
+    dialog_manager.dialog_data["buttons"] = buttons
 
     return {
         "buttons": buttons,
