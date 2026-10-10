@@ -40,10 +40,13 @@ from src.infrastructure.services import (
     WebhookService,
     XuiDbReaderImpl,
 )
+from src.infrastructure.services.gifts import GiftService
 
 
 class ServicesProvider(Provider):
     scope = Scope.APP
+
+    gifts = provide(GiftService, scope=Scope.REQUEST)
 
     bot = provide(source=BotServiceImpl, provides=BotService)
     health = provide(source=HealthService)

@@ -1,6 +1,6 @@
 from aiogram import Router
 
-from . import dashboard, extra, menu, subscription
+from . import dashboard, extra, gifts, menu, subscription
 
 
 def setup_routers(router: Router) -> None:
@@ -15,6 +15,7 @@ def setup_routers(router: Router) -> None:
         extra.goto.router,
         extra.inline.router,
         #
+        gifts.router,
         menu.handlers.router,
         menu.dialog.router,
         #

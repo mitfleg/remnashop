@@ -40,10 +40,15 @@ class SyncRemnaUser(Interactor[SyncRemnaUserDto, bool]):
         self.remnawave = remnawave
         self.cryptographer = cryptographer
 
-    async def _execute(self, actor: UserDto, data: SyncRemnaUserDto) -> bool:
+    async def _execute(self, actor: UserDto, data: SyncRemnaUserDto) -> bool:  # noqa: C901
         remna_user = data.remna_user
 
         async with self.uow:
+            known_subscription = await self.subscription_dao.get_by_remna_id(remna_user.uuid)
+            if remna_user.username == f"gft_{remna_user.uuid.hex}" and not known_subscription:
+                # Gift issuance owns creation of the local row after the panel call.
+                # A webhook arriving first must not import it as the user's main subscription.
+                return False
             user = await self.user_dao.get_by_remna_uuid(remna_user.uuid)
 
             if not user and remna_user.telegram_id:
@@ -71,7 +76,14 @@ class SyncRemnaUser(Interactor[SyncRemnaUserDto, bool]):
                 )
                 return False
 
-            subscription = await self.subscription_dao.get_current(user.id)
+            # An account can own an independent gift alongside its main subscription.
+            # Synchronize the matching UUID, never replace the main access with a gift.
+            subscription = known_subscription
+            if not subscription:
+                subscription = await self.subscription_dao.get_current(user.id)
+                if subscription and subscription.user_remna_id != remna_user.uuid:
+                    logger.warning("Ignoring sync for an unrelated subscription UUID")
+                    return False
             remna_subscription = RemnaSubscriptionDto.from_remna_user(remna_user)
 
             if not subscription:

@@ -69,6 +69,7 @@ from src.core.utils.i18n_helpers import (
     i18n_format_device_limit,
     i18n_format_traffic_limit,
 )
+from src.infrastructure.services.gifts import GiftService
 
 
 class CreateDefaultPaymentGateway(Interactor[None, None]):
@@ -140,6 +141,7 @@ class CreatePaymentDto:
     pricing: PriceDetailsDto
     purchase_type: PurchaseType
     gateway_type: PaymentGatewayType
+    gift_id: int | None = None
 
 
 class CreatePayment(Interactor[CreatePaymentDto, PaymentResultDto]):
@@ -152,15 +154,30 @@ class CreatePayment(Interactor[CreatePaymentDto, PaymentResultDto]):
         transaction_dao: TransactionDao,
         get_payment_gateway_instance: GetPaymentGatewayInstance,
         translator_hub: TranslatorHub,
+        gifts: GiftService,
     ) -> None:
         self.uow = uow
         self.payment_gateway_dao = payment_gateway_dao
         self.transaction_dao = transaction_dao
         self.get_payment_gateway_instance = get_payment_gateway_instance
         self.translator_hub = translator_hub
+        self.gifts = gifts
 
     async def _execute(self, actor: UserDto, data: CreatePaymentDto) -> PaymentResultDto:
         gateway_instance = await self.get_payment_gateway_instance.system(data.gateway_type)
+        if data.gift_id is not None:
+            existing_gift_payment = await self.gifts.validate_checkout(
+                actor,
+                data.gift_id,
+                data.plan_snapshot,
+                data.pricing,
+                gateway_instance.data.currency,
+            )
+            if existing_gift_payment:
+                await self.uow.commit()
+                return PaymentResultDto(
+                    id=existing_gift_payment.payment_id, url=existing_gift_payment.confirmation_url
+                )
         i18n = self.translator_hub.get_translator_by_locale(actor.language)
 
         key, kw = i18n_format_days(data.plan_snapshot.duration)
@@ -220,6 +237,7 @@ class CreatePayment(Interactor[CreatePaymentDto, PaymentResultDto]):
             pricing=data.pricing,
             currency=gateway_instance.data.currency,
             plan_snapshot=data.plan_snapshot,
+            gift_id=data.gift_id,
         )
 
         async with self.uow:
@@ -229,6 +247,7 @@ class CreatePayment(Interactor[CreatePaymentDto, PaymentResultDto]):
             )
 
             transaction.payment_id = payment.id
+            transaction.confirmation_url = payment.url
             await self.transaction_dao.create(transaction)
             await self.uow.commit()
 
@@ -311,6 +330,7 @@ class ProcessPayment(Interactor[ProcessPaymentDto, None]):
         redirect: Redirect,
         assign_referral_rewards: AssignReferralRewards,
         purchase_subscription: PurchaseSubscription,
+        gifts: GiftService,
     ) -> None:
         self.uow = uow
         self.user_dao = user_dao
@@ -322,8 +342,9 @@ class ProcessPayment(Interactor[ProcessPaymentDto, None]):
         self.redirect = redirect
         self.assign_referral_rewards = assign_referral_rewards
         self.purchase_subscription = purchase_subscription
+        self.gifts = gifts
 
-    async def _execute(self, actor: UserDto, data: ProcessPaymentDto) -> None:
+    async def _execute(self, actor: UserDto, data: ProcessPaymentDto) -> None:  # noqa: C901
         payment_id = data.payment_id
         new_status = data.new_transaction_status
 
@@ -346,6 +367,14 @@ class ProcessPayment(Interactor[ProcessPaymentDto, None]):
             if not user:
                 logger.critical(f"User not found for transaction '{payment_id}'")
                 return
+
+            if transaction.gift_id is not None:
+                if new_status == TransactionStatus.COMPLETED:
+                    await self.gifts.complete(payment_id)
+                    return
+                if new_status == TransactionStatus.REFUNDED:
+                    await self.gifts.refund(payment_id)
+                    return
 
             if new_status == TransactionStatus.CANCELED:
                 updated = await self.transaction_dao.transition_status(
