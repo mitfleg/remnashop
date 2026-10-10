@@ -16,9 +16,9 @@ def setup_routers(router: Router) -> None:
         extra.inline.router,
         #
         gifts.router,
-        gifts_dialog.router,
         menu.handlers.router,
         menu.dialog.router,
+        gifts_dialog.router,
         #
         subscription.dialog.router,
         #

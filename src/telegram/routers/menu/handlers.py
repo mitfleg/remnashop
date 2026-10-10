@@ -7,6 +7,7 @@ from aiogram_dialog.widgets.kbd import Button
 from dishka import FromDishka
 from dishka.integrations.aiogram_dialog import inject
 from loguru import logger
+from redis.asyncio import Redis
 
 from src.application.common import BotService, Notifier, Redirect, TranslatorRunner
 from src.application.common.dao import SettingsDao, SubscriptionDao
@@ -36,6 +37,7 @@ from src.core.utils.i18n_helpers import i18n_format_expire_time
 from src.core.utils.time import get_traffic_reset_delta
 from src.infrastructure.services.gifts import GiftService
 from src.telegram.keyboards import CALLBACK_CHANNEL_CONFIRM, CALLBACK_RULES_ACCEPT
+from src.telegram.routers.gifts import close_picker
 from src.telegram.states import MainMenu, Subscription
 
 router = Router(name=__name__)
@@ -43,13 +45,15 @@ router = Router(name=__name__)
 
 async def on_start_dialog(user: TelegramUserDto, dialog_manager: DialogManager) -> None:
     logger.info(f"{user.log} Started dialog")
+    container = dialog_manager.middleware_data[CONTAINER_KEY]
+    gifts = await container.get(GiftService)
+    await close_picker(gifts.bot, user, await container.get(Redis))
     await dialog_manager.start(
         state=MainMenu.MAIN,
         mode=StartMode.RESET_STACK,
         show_mode=ShowMode.DELETE_AND_SEND,
     )
 
-    gifts = await dialog_manager.middleware_data[CONTAINER_KEY].get(GiftService)
     received = await gifts.list_for(user, received=True)
     if any(
         gift.issued_at
