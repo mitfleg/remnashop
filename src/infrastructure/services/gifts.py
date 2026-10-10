@@ -1,5 +1,7 @@
-"""Gift checkout, isolated VPN access, and durable delivery for both participants."""
+"""Gift checkout, subscription renewal, and durable delivery for both participants."""
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
 from datetime import timedelta
 from html import escape
@@ -12,9 +14,10 @@ from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from loguru import logger
-from sqlalchemy import or_, select
+from remnapy.models import UserResponseDto
+from sqlalchemy import or_, select, text
 from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from src.application.common import Remnawave
 from src.application.common.dao import (
@@ -231,7 +234,30 @@ class GiftService:
             raise RuntimeError("Gift recipient could not be created")
         return recipient
 
+    @asynccontextmanager
+    async def _recipient_lock(self, gift_id: int) -> AsyncIterator[None]:
+        gift = await self.session.get(Gift, gift_id)
+        if not gift:
+            raise GiftError("Подарок не найден.")
+        key = f"remnashop:gift:{gift.recipient_telegram_id}"
+        await self.session.commit()
+        # A separate transaction keeps this lock across durable provisioning checkpoints.
+        # PostgreSQL releases it on rollback, cancellation, or a lost connection.
+        engine = cast(AsyncEngine, self.session.bind)
+        async with engine.begin() as connection:
+            await connection.execute(
+                text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"), {"key": key}
+            )
+            yield
+
     async def complete(self, payment_id: UUID) -> None:
+        transaction = await self.transactions.get_by_payment_id(payment_id)
+        if not transaction or not transaction.gift_id:
+            raise GiftError("Платёж подарка не найден.")
+        async with self._recipient_lock(transaction.gift_id):
+            await self._complete(payment_id)
+
+    async def _complete(self, payment_id: UUID) -> None:
         transaction = await self.transactions.get_by_payment_id(payment_id)
         if not transaction or not transaction.gift_id:
             raise GiftError("Платёж подарка не найден.")
@@ -257,7 +283,7 @@ class GiftService:
                 else days_to_datetime(0)
             )
         payment.status = TransactionStatus.COMPLETED
-        # Persist the UUID and absolute expiry BEFORE the remote call. Retries never add days.
+        # Persist the creation identity and absolute expiry before the remote call.
         await self.session.commit()
         gift_id = gift.id
         await self._provision(gift_id, transaction.plan_snapshot)
@@ -278,6 +304,12 @@ class GiftService:
                 await self.session.commit()
                 return
             recipient = await self._recipient(gift)
+            if gift.renewal_base_expire_at:
+                await self._renew(gift)
+                return
+            if await self._prepare_renewal(gift, recipient, plan):
+                await self._provision(gift_id, plan)
+                return
             subscription = SubscriptionDto(
                 user_id=recipient.id,
                 user_remna_id=gift.remna_uuid,
@@ -291,25 +323,22 @@ class GiftService:
                 url="",
                 plan_snapshot=plan,
             )
-            remote = await self.remnawave.get_user_by_uuid(gift.remna_uuid)
-            if remote is None:
-                identity = GiftRecipient(
-                    id=recipient.id,
-                    telegram_id=recipient.telegram_id,
-                    name=recipient.name,
-                    gift_uuid=gift.remna_uuid,
-                )
-                try:
-                    remote = await self.remnawave.create_user(identity, subscription=subscription)
-                except Exception:
-                    # A timeout can happen after the panel committed the creation.
-                    remote = await self.remnawave.get_user_by_uuid(gift.remna_uuid)
-                    if remote is None:
-                        raise
-            if remote.uuid != gift.remna_uuid or remote.telegram_id != gift.recipient_telegram_id:
-                raise RuntimeError("Gift remote identity mismatch")
+            identity = GiftRecipient(
+                id=recipient.id,
+                telegram_id=recipient.telegram_id,
+                name=recipient.name,
+                gift_uuid=gift.remna_uuid,
+            )
+            # v3 assigns numeric IDs. The persisted draft UUID supplies a unique username
+            # for recovery if the panel creates a user but the local transaction rolls back.
+            remote = await self._create_or_recover(identity, subscription)
+            # Commit the actual panel identity atomically with issued_at and the subscription.
+            gift.remna_uuid = remote.uuid
             subscription = replace(
-                subscription, url=remote.subscription_url, status=SubscriptionStatus(remote.status)
+                subscription,
+                user_remna_id=remote.uuid,
+                url=remote.subscription_url,
+                status=SubscriptionStatus(remote.status),
             )
             values = self.retort.dump(subscription)
             for key in ("id", "created_at", "updated_at"):
@@ -333,7 +362,70 @@ class GiftService:
             await self.session.rollback()
             raise
 
+    async def _create_or_recover(
+        self, identity: GiftRecipient, subscription: SubscriptionDto
+    ) -> UserResponseDto:
+        remote = await self.remnawave.get_user_by_username(identity.remna_name)
+        if remote is None:
+            try:
+                remote = await self.remnawave.create_user(identity, subscription=subscription)
+            except Exception:
+                # A timeout can happen after the panel committed the creation.
+                remote = await self.remnawave.get_user_by_username(identity.remna_name)
+                if remote is None:
+                    raise
+        if remote.username != identity.remna_name or remote.telegram_id != identity.telegram_id:
+            raise RuntimeError("Gift remote identity mismatch")
+        return remote
+
+    async def _prepare_renewal(self, gift: Gift, recipient: UserDto, plan: PlanSnapshotDto) -> bool:
+        current = await self.subscriptions.get_current(recipient.id)
+        if not current or current.is_trial:
+            return False
+        remote = await self.remnawave.get_user_by_uuid(current.user_remna_id)
+        if not remote:
+            return False
+        if remote.telegram_id != gift.recipient_telegram_id or not gift.paid_at:
+            raise RuntimeError("Gift remote identity mismatch")
+        gift.renewal_base_expire_at = max(remote.expire_at, gift.paid_at)
+        gift.expire_at = (
+            gift.renewal_base_expire_at + timedelta(days=plan.duration)
+            if plan.duration
+            else max(gift.renewal_base_expire_at, days_to_datetime(0))
+        )
+        gift.remna_uuid = remote.uuid
+        gift.subscription_id = current.id
+        # A retry uses the same absolute expiry even if PATCH already succeeded.
+        await self.session.commit()
+        return True
+
+    async def _renew(self, gift: Gift) -> None:
+        local = await self.session.get(Subscription, gift.subscription_id)
+        remote = await self.remnawave.get_user_by_uuid(gift.remna_uuid)
+        if (
+            not local
+            or not remote
+            or local.user_remna_id != gift.remna_uuid
+            or remote.telegram_id != gift.recipient_telegram_id
+            or not gift.expire_at
+        ):
+            raise RuntimeError("Gift renewal target is missing or mismatched")
+        if remote.expire_at < gift.expire_at:
+            remote = await self.remnawave.set_user_expiry(gift.remna_uuid, gift.expire_at)
+        local.expire_at = remote.expire_at
+        local.url = remote.subscription_url
+        local.status = SubscriptionStatus(remote.status)
+        gift.issued_at = datetime_now()
+        await self.session.commit()
+
     async def refund(self, payment_id: UUID) -> None:
+        transaction = await self.transactions.get_by_payment_id(payment_id)
+        if not transaction or not transaction.gift_id:
+            return
+        async with self._recipient_lock(transaction.gift_id):
+            await self._refund(payment_id)
+
+    async def _refund(self, payment_id: UUID) -> None:
         transaction = await self.transactions.get_by_payment_id(payment_id)
         if not transaction or not transaction.gift_id:
             return
@@ -348,18 +440,55 @@ class GiftService:
             if payment.status == TransactionStatus.REFUNDED:
                 await self.session.commit()
                 return
-            remote = await self.remnawave.get_user_by_uuid(gift.remna_uuid)
+            remote = (
+                await self.remnawave.get_user_by_uuid(gift.remna_uuid)
+                if gift.issued_at or gift.renewal_base_expire_at
+                else await self.remnawave.get_user_by_username(f"gft_{gift.remna_uuid.hex}")
+            )
             if remote:
-                await self.remnawave.disable_user(gift.remna_uuid)
+                if remote.telegram_id != gift.recipient_telegram_id:
+                    raise RuntimeError("Gift remote identity mismatch")
+                remote = await self._refund_remote(gift, remote)
             if gift.subscription_id:
                 local = await self.session.get(Subscription, gift.subscription_id)
                 if local:
-                    local.status = SubscriptionStatus.DISABLED
+                    if gift.refund_expire_at and remote:
+                        local.expire_at = remote.expire_at
+                        local.status = SubscriptionStatus(remote.status)
+                    else:
+                        local.status = SubscriptionStatus.DISABLED
             payment.status = TransactionStatus.REFUNDED
             await self.session.commit()
         except Exception:
             await self.session.rollback()
             raise
+
+    async def _refund_remote(self, gift: Gift, remote: UserResponseDto) -> UserResponseDto:
+        another_gift = await self.session.scalar(
+            select(Gift.id)
+            .join(Transaction, Transaction.gift_id == Gift.id)
+            .where(
+                Gift.id != gift.id,
+                Gift.remna_uuid == remote.uuid,
+                Gift.issued_at.is_not(None),
+                Transaction.status == TransactionStatus.COMPLETED,
+            )
+            .limit(1)
+        )
+        if gift.renewal_base_expire_at or another_gift:
+            if not gift.refund_expire_at:
+                base = gift.renewal_base_expire_at or gift.paid_at
+                if not base:
+                    raise RuntimeError("Gift refund has no paid period")
+                credited = gift.expire_at - base if gift.expire_at else timedelta(0)
+                applied = gift.issued_at or (gift.expire_at and remote.expire_at >= gift.expire_at)
+                gift.refund_expire_at = remote.expire_at - credited if applied else remote.expire_at
+                await self.session.commit()
+            if remote.expire_at > gift.refund_expire_at:
+                remote = await self.remnawave.set_user_expiry(remote.uuid, gift.refund_expire_at)
+        else:
+            await self.remnawave.disable_user(remote.uuid)
+        return remote
 
     async def list_for(
         self, actor: UserDto, received: bool = False, offset: int = 0
@@ -403,7 +532,11 @@ class GiftService:
             text.extend(
                 [
                     f"Тариф: {escape(plan.name)} · {gift_period(plan.duration)}",
-                    f"Устройства: {plan.device_limit or 'Без лимита'}",
+                    (
+                        "Продление: параметры и ссылка текущей подписки сохранены"
+                        if gift.renewal_base_expire_at
+                        else f"Устройства: {plan.device_limit or 'Без лимита'}"
+                    ),
                 ]
             )
             if is_buyer:
@@ -471,6 +604,18 @@ class GiftService:
         )
         return "\n".join(text), InlineKeyboardMarkup(inline_keyboard=rows)
 
+    def _recipient_notice(self, gift: Gift, payment: Transaction, buyer: Optional[UserDto]) -> str:
+        sender = escape(buyer.name) if buyer else "Пользователь"
+        days = payment.plan_snapshot["duration"]
+        text = f"🎁 {sender} подарил вам VPN на {gift_period(days)}!"
+        if gift.renewal_base_expire_at:
+            text += "\nВаша текущая подписка продлена. Параметры и ссылка сохранены."
+        else:
+            text += "\nПодписка уже оплачена."
+        if gift.expire_at:
+            text += f"\nДействует до: {gift.expire_at:%d.%m.%Y %H:%M} UTC"
+        return text
+
     async def notify(self, gift_id: int) -> None:
         gift = await self.session.scalar(
             select(Gift)
@@ -496,7 +641,7 @@ class GiftService:
                     body, markup = await self.card(person, gift_id)
                     text = "🎁 Подарок оплачен!\n\n" + body
                 else:
-                    text = "🎁 Вам подарили VPN! Подписка уже оплачена."
+                    text = self._recipient_notice(gift, payment, buyer)
                     markup = InlineKeyboardMarkup(
                         inline_keyboard=[
                             [

@@ -1,6 +1,7 @@
 import asyncio
 import copy
 import io
+import json
 import os
 from contextlib import asynccontextmanager
 from datetime import timedelta
@@ -9,8 +10,9 @@ from importlib import import_module
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
-from uuid import uuid4
+from uuid import UUID, uuid4
 
+import httpx
 import pytest
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.client.session.base import BaseSession
@@ -38,6 +40,7 @@ from alembic.operations import Operations
 from dishka import Provider, Scope, from_context, make_async_container
 from dishka.integrations.aiogram import setup_dishka
 from redis.asyncio import Redis
+from remnapy import RemnawaveSDK
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
@@ -96,9 +99,14 @@ with patch.object(
     from src.infrastructure.database.models import BaseSql, Subscription, User
     from src.infrastructure.database.uow import UnitOfWorkImpl
     from src.infrastructure.di.providers.retort import RetortProvider
+    from src.infrastructure.services import remnawave_v3_compat
     from src.infrastructure.services.gifts import GiftError, GiftRecipient, GiftService
     from src.infrastructure.services.i18n import LayeredFileStorage
     from src.infrastructure.services.remnawave import RemnawaveImpl
+    from src.infrastructure.services.remnawave_v3_compat import (
+        remnawave_v3_request_hook,
+        remnawave_v3_response_hook,
+    )
     from src.infrastructure.services.translator import TranslatorHubImpl
     from src.telegram.routers import gifts as handlers
     from src.telegram.routers import setup_routers
@@ -284,9 +292,19 @@ async def store():
         panel[remote.uuid] = remote
         return remote
 
+    async def set_expiry(uuid, expire_at):
+        panel[uuid].expire_at = expire_at
+        return panel[uuid]
+
     remote = SimpleNamespace(
         get_user_by_uuid=AsyncMock(side_effect=lambda key: panel.get(key)),
+        get_user_by_username=AsyncMock(
+            side_effect=lambda name: next(
+                (user for user in panel.values() if user.username == name), None
+            )
+        ),
         create_user=AsyncMock(side_effect=remote_create),
+        set_user_expiry=AsyncMock(side_effect=set_expiry),
         disable_user=AsyncMock(),
     )
     bot = SimpleNamespace(
@@ -389,7 +407,7 @@ async def test_new_recipient_issued_before_first_start_and_both_can_reopen(store
             await svc.card(outsider, gift_id)
 
 
-async def test_existing_paid_subscription_is_not_replaced_and_gift_has_own_link(store):
+async def test_existing_paid_subscription_keeps_limits_and_link_and_adds_days(store):
     async with store.service() as svc:
         receiver = await svc.users.create(
             UserDto(
@@ -409,15 +427,31 @@ async def test_existing_paid_subscription_is_not_replaced_and_gift_has_own_link(
             ),
             receiver.id,
         )
+        store.panel[UUID(str(original.user_remna_id))] = SimpleNamespace(
+            uuid=UUID(str(original.user_remna_id)),
+            username="rs_222",
+            telegram_id=222,
+            expire_at=original.expire_at,
+            subscription_url=original.url,
+            status="ACTIVE",
+        )
         await svc.session.commit()
     gift_id, payment_id = await store.order()
     async with store.service() as svc:
         await svc.complete(payment_id)
         current = await svc.subscriptions.get_current(receiver.id)
         assert current.id == original.id and current.device_limit == 9
+        assert current.expire_at == original.expire_at + timedelta(days=30)
+        assert current.plan_snapshot == original.plan_snapshot
         body, _ = await svc.card(store.buyer, gift_id)
-        assert original.url not in body
+        assert original.url in body
         assert (await svc.users.get_by_id(receiver.id)).purchase_discount == 25
+        store.remote.create_user.assert_not_awaited()
+        notices = [
+            call.args[1] for call in store.bot.send_message.call_args_list if call.args[0] == 222
+        ]
+        assert len(notices) == 1
+        assert "Buyer" in notices[0] and "30 дн." in notices[0] and "продлена" in notices[0]
 
 
 async def test_concurrent_duplicate_callbacks_issue_exactly_once(store):
@@ -462,6 +496,195 @@ async def test_crash_after_remote_create_recovers_same_uuid_and_expiry(store):
         assert gift.issued_at and gift.expire_at == remote_before.expire_at
         assert gift.remna_uuid == remote_before.uuid
     store.remote.create_user.assert_awaited_once()
+
+
+@pytest.fixture
+async def v3_panel(monkeypatch, tmp_path):
+    monkeypatch.setattr(remnawave_v3_compat, "MAP_PATH", tmp_path / "no-legacy-map.json")
+    state = SimpleNamespace(users={}, creates=0, timeout=False, patch_timeout=False, requests=[])
+
+    def transport(request):
+        path = request.url.path
+        state.requests.append((request.method, path))
+        if request.method == "POST" and path == "/api/users":
+            data = json.loads(request.content)
+            assert "uuid" not in data  # The deployed v3 hook removes client-assigned UUIDs.
+            assert not any(user["username"] == data["username"] for user in state.users.values())
+            state.creates += 1
+            user_id = 1234 + state.creates
+            data.update(
+                id=user_id,
+                shortUuid=f"gift{user_id}",
+                status="ACTIVE",
+                trojanPassword="test",
+                vlessUuid=str(uuid4()),
+                ssPassword="test",
+                createdAt=datetime_now().isoformat(),
+                updatedAt=datetime_now().isoformat(),
+                subscriptionUrl=f"https://example.test/sub/gift{user_id}",
+                activeInternalSquads=[],
+                userTraffic={"usedTrafficBytes": 0, "lifetimeUsedTrafficBytes": 0},
+            )
+            state.users[user_id] = data
+            if state.timeout:
+                state.timeout = False
+                raise httpx.ReadTimeout("Panel committed before timeout", request=request)
+            return httpx.Response(201, json={"response": data})
+        if request.method == "GET" and path.startswith("/api/users/by-username/"):
+            name = path.rsplit("/", 1)[1]
+            user = next((user for user in state.users.values() if user["username"] == name), None)
+            if user:
+                return httpx.Response(200, json={"response": user})
+            return httpx.Response(404, json={"message": "User not found", "statusCode": 404})
+        if request.method == "PATCH" and path == "/api/users":
+            data = json.loads(request.content)
+            assert set(data) == {"id", "expireAt"}  # Never overwrite limits, squads or credentials.
+            user = state.users[data["id"]]
+            user["expireAt"] = data["expireAt"]
+            if state.patch_timeout:
+                state.patch_timeout = False
+                raise httpx.ReadTimeout("Expiry saved before timeout", request=request)
+            return httpx.Response(200, json={"response": user})
+        parts = path.removeprefix("/api/users/").split("/")
+        assert parts[0].isdigit(), "v3 must receive a numeric ID, never a draft UUID"
+        user = state.users[int(parts[0])]
+        if request.method == "POST" and parts[1:] == ["actions", "disable"]:
+            user["status"] = "DISABLED"
+        else:
+            assert request.method == "GET" and len(parts) == 1
+        return httpx.Response(200, json={"response": user})
+
+    async with httpx.AsyncClient(
+        base_url="https://panel.example.test/api",
+        transport=httpx.MockTransport(transport),
+        event_hooks={
+            "request": [remnawave_v3_request_hook],
+            "response": [remnawave_v3_response_hook],
+        },
+    ) as client:
+        state.adapter = RemnawaveImpl(RemnawaveSDK(client))
+        yield state
+
+
+@pytest.mark.parametrize("failure", [None, "timeout", "local_commit"])
+async def test_v3_gift_recovers_numeric_identity_without_duplicates(store, v3_panel, failure):
+    gift_id, payment_id = await store.order()
+    async with store.service() as svc:
+        svc.remnawave = v3_panel.adapter
+        original_uuid = (await svc.get(store.buyer, gift_id)).remna_uuid
+        v3_panel.timeout = failure == "timeout"
+        if failure == "local_commit":
+            with patch.object(svc.session, "flush", side_effect=RuntimeError("local crash")):
+                with pytest.raises(RuntimeError, match="local crash"):
+                    await svc.complete(payment_id)
+        else:
+            await svc.complete(payment_id)
+    async with store.service() as svc:
+        svc.remnawave = v3_panel.adapter
+        await svc.complete(payment_id)
+        await svc.complete(payment_id)
+        gift = await svc.get(store.buyer, gift_id)
+        assert gift.issued_at and gift.remna_uuid == UUID(int=1235)
+        remote = await svc.remnawave.get_user_by_uuid(gift.remna_uuid)
+        assert remote.username == f"gft_{original_uuid.hex}"
+        assert remote.telegram_id == gift.recipient_telegram_id
+        assert remote.expire_at == gift.expire_at
+        local = await svc.subscriptions.get_by_id(gift.subscription_id)
+        assert local.user_remna_id == gift.remna_uuid and local.url == remote.subscription_url
+        assert v3_panel.creates == 1 and len(v3_panel.users) == 1
+        await svc.refund(payment_id)
+        assert v3_panel.users[1235]["status"] == "DISABLED"
+
+
+async def test_v3_refund_after_local_crash_disables_orphan_by_username(store, v3_panel):
+    gift_id, payment_id = await store.order()
+    async with store.service() as svc:
+        svc.remnawave = v3_panel.adapter
+        with patch.object(svc.session, "flush", side_effect=RuntimeError("local crash")):
+            with pytest.raises(RuntimeError, match="local crash"):
+                await svc.complete(payment_id)
+    async with store.service() as svc:
+        svc.remnawave = v3_panel.adapter
+        await svc.refund(payment_id)
+        await svc.complete(payment_id)
+        gift = await svc.get(store.buyer, gift_id)
+        assert not gift.issued_at
+        assert v3_panel.users[1235]["status"] == "DISABLED"
+        assert v3_panel.creates == 1
+
+
+@pytest.mark.parametrize("timeout", [False, True])
+async def test_v3_renewal_keeps_all_parameters_and_retries_without_extra_days(
+    store, v3_panel, timeout
+):
+    first_id, first_payment = await store.order()
+    async with store.service() as svc:
+        svc.remnawave = v3_panel.adapter
+        await svc.complete(first_payment)
+        first = await svc.get(store.buyer, first_id)
+        original_expiry = first.expire_at
+    before = copy.deepcopy(v3_panel.users[1235])
+    gift_id, payment_id = await store.order()
+    v3_panel.patch_timeout = timeout
+    async with store.service() as svc:
+        svc.remnawave = v3_panel.adapter
+        if timeout:
+            with pytest.raises(httpx.ReadTimeout):
+                await svc.complete(payment_id)
+        else:
+            await svc.complete(payment_id)
+    async with store.service() as svc:
+        svc.remnawave = v3_panel.adapter
+        await svc.complete(payment_id)
+        gift = await svc.get(store.buyer, gift_id)
+        assert gift.expire_at == original_expiry + timedelta(days=30)
+        assert gift.subscription_id == first.subscription_id
+        after = copy.deepcopy(v3_panel.users[1235])
+        before.pop("expireAt")
+        after.pop("expireAt")
+        assert before == after
+        assert v3_panel.creates == 1
+        assert v3_panel.requests.count(("PATCH", "/api/users")) == 1
+        # Reverting the gift preserves the original paid period, limits and URL.
+        await svc.refund(payment_id)
+        await svc.refund(payment_id)
+        local = await svc.subscriptions.get_by_id(first.subscription_id)
+        assert local.expire_at == original_expiry
+        assert v3_panel.users[1235]["status"] == "ACTIVE"
+
+
+async def test_refunding_original_gift_preserves_later_gift_days(store, v3_panel):
+    first_id, first_payment = await store.order()
+    second_id, second_payment = await store.order()
+    async with store.service() as svc:
+        svc.remnawave = v3_panel.adapter
+        await svc.complete(first_payment)
+        await svc.complete(second_payment)
+        second = await svc.get(store.buyer, second_id)
+        expires_before = second.expire_at
+        v3_panel.patch_timeout = True
+        with pytest.raises(httpx.ReadTimeout):
+            await svc.refund(first_payment)
+    async with store.service() as svc:
+        svc.remnawave = v3_panel.adapter
+        await svc.refund(first_payment)
+        await svc.refund(first_payment)
+        local = await svc.subscriptions.get_by_id(second.subscription_id)
+        assert local.expire_at == expires_before - timedelta(days=30)
+        assert v3_panel.users[1235]["status"] == "ACTIVE"
+
+
+async def test_gift_rejects_remote_username_belonging_to_another_recipient(store):
+    gift_id, payment_id = await store.order()
+    async with store.service() as svc:
+        gift = await svc.get(store.buyer, gift_id)
+        store.remote.get_user_by_username.side_effect = None
+        store.remote.get_user_by_username.return_value = SimpleNamespace(
+            uuid=uuid4(), username=f"gft_{gift.remna_uuid.hex}", telegram_id=333
+        )
+        with pytest.raises(RuntimeError, match="identity mismatch"):
+            await svc.complete(payment_id)
+        store.remote.create_user.assert_not_awaited()
 
 
 async def test_refund_disables_only_gift_and_duplicate_success_cannot_restore_it(store):
@@ -551,7 +774,7 @@ async def test_repeated_checkout_reuses_invoice(store):
         assert row.plan_snapshot["duration"] == 30
 
 
-async def test_two_gifts_for_same_new_recipient_share_account_but_not_subscriptions(store):
+async def test_two_concurrent_gifts_extend_one_subscription_once_each(store):
     first_id, first_payment = await store.order()
     second_id, second_payment = await store.order()
 
@@ -564,13 +787,15 @@ async def test_two_gifts_for_same_new_recipient_share_account_but_not_subscripti
         recipient = await svc.users.get_by_telegram_id(222)
         first = await svc.get(recipient, first_id)
         second = await svc.get(recipient, second_id)
-        assert first.remna_uuid != second.remna_uuid
-        assert first.subscription_id != second.subscription_id
-        assert len(await svc.subscriptions.get_all_by_user(recipient.id)) == 2
-        assert (await svc.subscriptions.get_current(recipient.id)).id in (
-            first.subscription_id,
-            second.subscription_id,
-        )
+        assert first.remna_uuid == second.remna_uuid
+        assert first.subscription_id == second.subscription_id
+        assert len(await svc.subscriptions.get_all_by_user(recipient.id)) == 1
+        current = await svc.subscriptions.get_current(recipient.id)
+        assert current.id == first.subscription_id
+        original, renewal = (first, second) if second.renewal_base_expire_at else (second, first)
+        assert current.expire_at == original.expire_at + timedelta(days=30)
+        assert renewal.expire_at == current.expire_at
+        store.remote.create_user.assert_awaited_once()
         assert (
             await svc.session.scalar(
                 select(func.count()).select_from(User).where(User.telegram_id == 222)
@@ -701,6 +926,12 @@ async def test_migration_round_trip_keeps_ordinary_payments(store):
         with Operations.context(context):
             migration.downgrade()
             migration.upgrade()
+            renewal = import_module(
+                "src.infrastructure.database.migrations.versions.0044_gifts_extend_current_subscription"
+            )
+            renewal.upgrade()
+            renewal.downgrade()
+            renewal.upgrade()
 
     async with store.engine.begin() as connection:
         await connection.run_sync(migrate)

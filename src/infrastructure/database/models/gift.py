@@ -18,11 +18,13 @@ class Gift(BaseSql, TimestampMixin):
     recipient_telegram_id: Mapped[int] = mapped_column(BigInteger, index=True)
     recipient_name: Mapped[str]
     recipient_username: Mapped[Optional[str]]
-    remna_uuid: Mapped[UUID] = mapped_column(unique=True)
+    remna_uuid: Mapped[UUID] = mapped_column(index=True)
     paid_at: Mapped[Optional[datetime]]
     expire_at: Mapped[Optional[datetime]]
+    renewal_base_expire_at: Mapped[Optional[datetime]]
+    refund_expire_at: Mapped[Optional[datetime]]
     subscription_id: Mapped[Optional[int]] = mapped_column(
-        Integer, ForeignKey("subscriptions.id", ondelete="SET NULL"), unique=True
+        Integer, ForeignKey("subscriptions.id", ondelete="SET NULL"), index=True
     )
     issued_at: Mapped[Optional[datetime]]
     buyer_unreachable_at: Mapped[Optional[datetime]]
