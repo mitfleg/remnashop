@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import pytest
@@ -23,7 +23,6 @@ from src.application.services import (
     resolve_initial_device_limit,
     select_excess_devices,
 )
-from src.application.use_cases.gateways.commands.payment import CreatePayment, CreatePaymentDto
 from src.application.use_cases.plan.commands.edit import (
     UpdatePlanDevice,
     UpdatePlanDeviceDto,
@@ -39,6 +38,7 @@ from src.application.use_cases.subscription.commands.purchase import (
     PurchaseSubscription,
     PurchaseSubscriptionDto,
 )
+from src.core.config import AppConfig
 from src.core.enums import (
     Currency,
     PaymentGatewayType,
@@ -49,6 +49,13 @@ from src.core.enums import (
 )
 from src.core.utils.converters import decimal_to_plain
 from src.core.utils.time import datetime_now
+
+with patch.object(
+    AppConfig,
+    "get",
+    return_value=SimpleNamespace(redis=SimpleNamespace(dsn="redis://localhost/15")),
+):
+    from src.application.use_cases.gateways.commands.payment import CreatePayment, CreatePaymentDto
 
 
 def make_plan() -> PlanDto:
@@ -445,6 +452,7 @@ async def test_free_pending_payment_reuse_matches_purchase_type_and_device_limit
         handle_create_payment=AsyncMock(),
     )
     create_payment = CreatePayment(
+        gifts=SimpleNamespace(),
         uow=FakeUnitOfWork(),
         payment_gateway_dao=SimpleNamespace(),
         transaction_dao=transaction_dao,

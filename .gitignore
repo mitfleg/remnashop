@@ -3,7 +3,8 @@
 .vscode/
 .code-workspace
 data/*
-tests
+/tests/*
+!/tests/test_gifts.py
 .DS_Store
 traefik
 logs/*

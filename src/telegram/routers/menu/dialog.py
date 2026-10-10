@@ -2,7 +2,7 @@ from aiogram.enums import ButtonStyle
 from aiogram_dialog import Dialog, StartMode
 from aiogram_dialog.widgets.input import MessageInput
 from aiogram_dialog.widgets.style import Style
-from aiogram_dialog.widgets.text import Format
+from aiogram_dialog.widgets.text import Const, Format
 from magic_filter import F
 
 from src.application.common.policy import Permission
@@ -10,6 +10,7 @@ from src.core.constants import INLINE_QUERY_INVITE, PAYMENT_PREFIX
 from src.core.enums import BannerName
 from src.telegram.keyboards import build_buttons_row, connect_buttons
 from src.telegram.routers.dashboard.handlers import on_smart_search
+from src.telegram.routers.gifts import on_gift_history, on_gift_start
 from src.telegram.states import Dashboard, MainMenu, Subscription
 from src.telegram.utils import require_permission
 from src.telegram.widgets import Banner, I18nFormat, IgnoreUpdate
@@ -93,6 +94,10 @@ menu = Window(
             id=f"{PAYMENT_PREFIX}subscription",
             state=Subscription.MAIN,
         ),
+    ),
+    Row(
+        Button(Const("🎁 Подарить VPN"), id="gift_new", on_click=on_gift_start),
+        Button(Const("Мои подарки"), id="gift_history", on_click=on_gift_history),
     ),
     Row(
         Button(

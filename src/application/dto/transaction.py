@@ -40,6 +40,8 @@ class TransactionDto(BaseDto, TrackableMixin, TimestampMixin):
     gateway_type: PaymentGatewayType
     gateway_display_name: Optional[str] = None
     payment_method: Optional[str] = None
+    gift_id: Optional[int] = None
+    confirmation_url: Optional[str] = None
 
     pricing: "PriceDetailsDto"
     currency: Currency

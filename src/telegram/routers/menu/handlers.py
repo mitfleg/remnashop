@@ -1,7 +1,7 @@
 from adaptix import Retort
 from aiogram import F, Router
 from aiogram.filters import CommandStart
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from aiogram_dialog import DialogManager, ShowMode, StartMode
 from aiogram_dialog.widgets.kbd import Button
 from dishka import FromDishka
@@ -29,11 +29,12 @@ from src.application.use_cases.subscription.commands.purchase import (
 )
 from src.application.use_cases.user.commands.profile_edit import ResetOwnReferralCode
 from src.application.use_cases.user.queries.plans import GetAvailableTrial
-from src.core.constants import USER_KEY
+from src.core.constants import CONTAINER_KEY, USER_KEY
 from src.core.enums import MediaType
 from src.core.exceptions import CooldownError
 from src.core.utils.i18n_helpers import i18n_format_expire_time
 from src.core.utils.time import get_traffic_reset_delta
+from src.infrastructure.services.gifts import GiftService
 from src.telegram.keyboards import CALLBACK_CHANNEL_CONFIRM, CALLBACK_RULES_ACCEPT
 from src.telegram.states import MainMenu, Subscription
 
@@ -47,6 +48,29 @@ async def on_start_dialog(user: TelegramUserDto, dialog_manager: DialogManager) 
         mode=StartMode.RESET_STACK,
         show_mode=ShowMode.DELETE_AND_SEND,
     )
+
+    gifts = await dialog_manager.middleware_data[CONTAINER_KEY].get(GiftService)
+    received = await gifts.list_for(user, received=True)
+    if any(
+        gift.issued_at
+        and not gift.recipient_seen_at
+        and payment
+        and payment.status.value == "COMPLETED"
+        for gift, payment in received
+    ):
+        await gifts.bot.send_message(
+            user.telegram_id,
+            "🎁 Вам подарили VPN. Откройте полученные подарки — подписка уже оплачена.",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text="Полученные подарки", callback_data="gift:list:received:0"
+                        ),
+                    ]
+                ]
+            ),
+        )
 
 
 @router.message(CommandStart(ignore_case=True))
