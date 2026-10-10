@@ -122,6 +122,8 @@ ntf-subscription =
     .invalid-device-limit = ❌ <i>Введите целое число от { $min_device_limit } до { $max_device_limit }.</i>
 
 ntf-broadcast =
+    .album-invalid = ❌ Отправьте альбом из 2–10 фото или видео с одной общей подписью. Документы — отдельным альбомом. Предыдущий черновик сохранён.
+    .album-actions = Действия с публикацией ↑
     .text-too-long = ❌ Превышено максимальное кол-во символов ({ $max_limit }).
     .list-empty = ❌ <i>Список рассылок пуст.</i>
     .plans-unavailable = ❌ <i>Нет доступных планов.</i>

@@ -29,5 +29,6 @@ class BroadcastMessageDto(BaseDto, TrackableMixin):
     user_id: int
     user_telegram_id: Optional[int] = None  # Telegram chat ID; None for web-only users
     message_id: Optional[int] = None
+    message_ids: list[int] = field(default_factory=list)
 
     status: BroadcastMessageStatus

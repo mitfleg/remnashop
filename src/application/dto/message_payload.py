@@ -12,6 +12,12 @@ class MediaDescriptorDto:
     filename: Optional[str] = None
 
 
+@dataclass(frozen=True)
+class AlbumMediaDto:
+    media: MediaDescriptorDto
+    media_type: MediaType
+
+
 @dataclass(kw_only=True)
 class MessagePayloadDto:
     i18n_key: str
@@ -19,6 +25,7 @@ class MessagePayloadDto:
 
     media: Optional[MediaDescriptorDto] = None
     media_type: Optional[MediaType] = None
+    album: list[AlbumMediaDto] = field(default_factory=list)
 
     reply_markup: Optional[AnyKeyboard] = None
     disable_default_markup: bool = True
@@ -29,7 +36,7 @@ class MessagePayloadDto:
 
     @property
     def is_text(self) -> bool:
-        return not self.media_type
+        return not self.media_type and not self.album
 
     @property
     def is_photo(self) -> bool:

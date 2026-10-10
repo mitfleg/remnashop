@@ -20,13 +20,15 @@ class GarbageMiddleware(EventTypedMiddleware):
         data: dict[str, Any],
     ) -> Any:
         message = cast(Message, event)
+        messages = data.get("media_album", [message])
         user: TelegramUserDto = data[USER_KEY]
 
-        if message.text != f"/{Command.START.value.command}":
-            try:
-                await message.delete()
-                logger.debug(f"Message '{message.content_type}' deleted from {user.log}")
-            except Exception as e:
-                logger.debug(f"Failed to delete message from {user.log}: '{e}'")
+        for message in messages:
+            if message.text != f"/{Command.START.value.command}":
+                try:
+                    await message.delete()
+                    logger.debug(f"Message '{message.content_type}' deleted from {user.log}")
+                except Exception as e:
+                    logger.debug(f"Failed to delete message from {user.log}: '{e}'")
 
         return await handler(event, data)
