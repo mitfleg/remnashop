@@ -127,32 +127,53 @@ async def getter(dialog_manager: DialogManager, **kwargs: Any) -> dict[str, Any]
     text = "<b>🛡 Белые списки</b>\n\n"
     if payment.get("provisioned"):
         text += (
-            "Оплата получена. Дни сохранены и начнут использоваться после возобновления VPN."
+            "<b>✅ Оплата получена</b>\n\n"
+            "<blockquote>⏸ Дни белых списков сохранены.\n"
+            "Они начнут использоваться после продления основной VPN-подписки.</blockquote>"
             if payment.get("paused")
-            else "Белые списки подключены. Обновите подписку в приложении INCY."
+            else "<b>✅ Белые списки подключены!</b>\n\n"
+            "<blockquote>🔄 Обновите подписку в приложении <b>INCY</b>, "
+            "чтобы появились дополнительные серверы.</blockquote>"
         )
     elif status in ("CANCELED", "REFUNDED"):
-        text += "Платёж отменён или возвращён. Для новой покупки вернитесь в главное меню."
+        text += (
+            "<b>↩️ Платёж отменён или возвращён</b>\n\nДля новой покупки вернитесь в главное меню."
+        )
     elif status == "SUCCEEDED":
-        text += "Оплата получена. Подключаем белые списки. Повторно платить не нужно."
+        text += (
+            "<b>✅ Оплата получена</b>\n\n"
+            "<blockquote>⏳ Подключаем белые списки.\nПовторно платить не нужно.</blockquote>\n\n"
+            "Нажмите «Проверить оплату», чтобы обновить статус."
+        )
     elif invoice:
         text += (
-            f"К оплате: <b>{rubles(invoice.get('amountKopecks') or offer['priceKopecks'])}</b>\n"
-            "Нажмите «Оплатить», затем «Проверить оплату». "
-            "После оплаты доступ включится автоматически."
+            "<b>🧾 Ваш заказ</b>\n"
+            "<blockquote>💰 К оплате: "
+            f"<b>{rubles(invoice.get('amountKopecks') or offer['priceKopecks'])}</b>\n"
+            f"🗓 Срок доступа: <b>{offer['durationDays']} дней</b></blockquote>\n\n"
+            "Нажмите «Оплатить» и завершите оплату на странице платёжного сервиса.\n\n"
+            "<i>⚡ Доступ включится автоматически. Проверить статус можно кнопкой ниже.</i>"
         )
     elif offer.get("available"):
         text += (
-            f"<b>{rubles(offer['priceKopecks'])} · {offer['durationDays']} дней</b>\n\n"
-            "Дополнительные серверы для приложения <b>INCY</b>.\n"
-            "Основной тариф и ключ сохраняются. Если VPN-подписка закончится раньше, "
-            "оставшиеся дни белых списков будут на паузе до её продления.\n\n"
-            "Выберите способ оплаты:"
+            "Дополнительные VPN-серверы для приложения <b>INCY</b>.\n\n"
+            "<b>💎 Условия подключения</b>\n"
+            f"<blockquote>💰 Стоимость: <b>{rubles(offer['priceKopecks'])}</b>\n"
+            f"🗓 Срок доступа: <b>{offer['durationDays']} дней</b>\n"
+            "🔑 Ваш тариф и ключ сохраняются</blockquote>\n\n"
+            "<b>⏸ Если основная подписка закончится</b>\n"
+            "Оставшиеся дни белых списков будут на паузе. "
+            "После продления VPN они продолжат действовать.\n\n"
+            "<b>💳 Выберите способ оплаты:</b>"
         )
     else:
-        text += escape(offer.get("reason") or "Не удалось проверить доступность покупки.")
+        text += (
+            "<blockquote>ℹ️ "
+            + escape(offer.get("reason") or "Не удалось проверить доступность покупки.")
+            + "</blockquote>"
+        )
     if data.get("error"):
-        text += "\n\n" + escape(data["error"])
+        text += "\n\n<b>⚠️ Не удалось выполнить действие</b>\n" + escape(data["error"])
     return {
         "text": text,
         "providers": offer.get("providers", []),
@@ -171,7 +192,7 @@ dialog = Dialog(
         Format("{text}"),
         Column(
             Select(
-                Format("{item[label]}"),
+                Format("💳 {item[label]}"),
                 id="provider",
                 items="providers",
                 item_id_getter=lambda item: item["id"],
@@ -181,7 +202,7 @@ dialog = Dialog(
         ),
         Row(
             Url(
-                Const("Оплатить"),
+                Const("💳 Оплатить"),
                 Format("{payment_url}"),
                 when="can_pay",
                 style=Style(ButtonStyle.PRIMARY),
@@ -189,7 +210,7 @@ dialog = Dialog(
         ),
         Row(
             Button(
-                Const("Проверить оплату"),
+                Const("✅ Проверить оплату"),
                 id="check",
                 on_click=on_refresh,
                 when="has_invoice",
@@ -197,13 +218,13 @@ dialog = Dialog(
         ),
         Row(
             Button(
-                Const("Обновить"),
+                Const("🔄 Обновить"),
                 id="refresh",
                 on_click=on_refresh,
                 when=~F["has_invoice"],
             )
         ),
-        Row(Button(Const("В главное меню"), id="menu", on_click=on_menu)),
+        Row(Button(Const("⬅️ В главное меню"), id="menu", on_click=on_menu)),
         IgnoreUpdate(),
         state=Whitelist.MAIN,
         getter=getter,
