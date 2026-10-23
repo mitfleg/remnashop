@@ -4,11 +4,12 @@ import hashlib
 import hmac
 import json
 import time
-from typing import Any
+from typing import Any, cast
 
 import aiohttp
 from loguru import logger
 from redis.asyncio import Redis
+from redis.exceptions import RedisError
 
 from src.application.dto import UserDto
 from src.core.config import AppConfig
@@ -43,7 +44,13 @@ class CabinetWhitelist:
         data = {"action": action, "sourceUserId": user.id, **payload}
         if user.telegram_id:
             data["telegramId"] = str(user.telegram_id)
-        return await self._send(data, timeout=timeout)
+        result = await self._send(data, timeout=timeout)
+        if action in ("payment", "checkout") and (
+            result.get("status") == "SUCCEEDED" or result.get("provisioned")
+        ):
+            # A known paid invoice must invalidate a previously available menu offer.
+            await self._save_offer(user, {"available": False})
+        return result
 
     async def _send(self, data: dict[str, Any], *, timeout: float = 30) -> dict[str, Any]:
         if not self.enabled:
@@ -83,13 +90,54 @@ class CabinetWhitelist:
                 "Не удалось проверить покупку. Повторите попытку — новый счёт не требуется."
             ) from exc
 
-    async def offer(self, user: UserDto, *, timeout: float = 10) -> dict[str, Any]:
-        return await self.request(user, "offer", timeout=timeout)
+    def _offer_key(self, user: UserDto) -> str:
+        return f"cabinet:whitelist:offer:{user.id}:{user.telegram_id}"
+
+    async def _save_offer(self, user: UserDto, offer: dict[str, Any]) -> None:
+        if self.redis is not None:
+            try:
+                await self.redis.set(
+                    self._offer_key(user),
+                    json.dumps({"at": time.time(), "offer": offer}),
+                    ex=300,
+                )
+            except RedisError:
+                logger.warning("Could not cache Cabinet whitelist menu offer")
+
+    async def offer(
+        self, user: UserDto, *, timeout: float = 10, for_menu: bool = False
+    ) -> dict[str, Any]:
+        cached = None
+        if for_menu and self.redis is not None:
+            try:
+                raw = await self.redis.get(self._offer_key(user))
+                value = json.loads(raw) if raw else None
+                if (
+                    isinstance(value, dict)
+                    and isinstance(value.get("at"), (int, float))
+                    and isinstance(value.get("offer"), dict)
+                    and isinstance(value["offer"].get("available"), bool)
+                    and 0 <= time.time() - value["at"] < 300
+                ):
+                    cached = value
+            except (RedisError, ValueError, TypeError):
+                logger.warning("Could not read cached Cabinet whitelist menu offer")
+        if cached and time.time() - cached["at"] < 30:
+            return cast(dict[str, Any], cached["offer"])
+        try:
+            result = await self.request(user, "offer", timeout=timeout)
+        except CabinetError:
+            if cached:
+                # Presentation only: opening checkout always checks Cabinet again.
+                return cast(dict[str, Any], cached["offer"])
+            raise
+        await self._save_offer(user, result)
+        return result
 
     async def checkout(
         self, user: UserDto, offer: dict[str, Any], provider: str, checkout_key: str
     ) -> dict[str, Any]:
-        return await self.request(
+        result = await self.request(
             user,
             "checkout",
             timeout=45,
@@ -98,6 +146,9 @@ class CabinetWhitelist:
             priceKopecks=offer["priceKopecks"],
             planId=offer["planId"],
         )
+        if result.get("provider") != provider:
+            raise CabinetError("Способ оплаты не совпал. Откройте покупку заново.")
+        return result
 
     async def stage_squad_sync(self, user: UserDto, **payload: Any) -> str:
         if self.redis is None:

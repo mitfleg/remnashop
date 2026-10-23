@@ -84,8 +84,14 @@ async def on_provider(
     await callback.answer()
     data = dialog_manager.dialog_data
     user = dialog_manager.middleware_data[USER_KEY]
+    keys = data.setdefault("checkout_keys", {})
+    checkout_key = keys.setdefault(item_id, str(uuid4()))
+    if data.get("checkout_provider") != item_id:
+        data.pop("invoice", None)
+        data.pop("payment", None)
+    data["checkout_provider"] = item_id
     try:
-        invoice = await cabinet.checkout(user, data["offer"], item_id, data["checkout_key"])
+        invoice = await cabinet.checkout(user, data["offer"], item_id, checkout_key)
         data.update(invoice=invoice, error="")
     except CabinetError as exc:
         data["error"] = str(exc)
@@ -146,11 +152,15 @@ async def getter(dialog_manager: DialogManager, **kwargs: Any) -> dict[str, Any]
             "Нажмите «Проверить оплату», чтобы обновить статус."
         )
     elif invoice:
+        provider_label = {"YOOKASSA": "ЮKassa", "PLATEGA": "Platega"}.get(
+            invoice.get("provider"), ""
+        )
         text += (
             "<b>🧾 Ваш заказ</b>\n"
             "<blockquote>💰 К оплате: "
             f"<b>{rubles(invoice.get('amountKopecks') or offer['priceKopecks'])}</b>\n"
-            f"🗓 Срок доступа: <b>{offer['durationDays']} дней</b></blockquote>\n\n"
+            f"🗓 Срок доступа: <b>{offer['durationDays']} дней</b>\n"
+            f"💳 Способ оплаты: <b>{provider_label}</b></blockquote>\n\n"
             "Нажмите «Оплатить» и завершите оплату на странице платёжного сервиса.\n\n"
             "<i>⚡ Доступ включится автоматически. Проверить статус можно кнопкой ниже.</i>"
         )

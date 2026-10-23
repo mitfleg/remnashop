@@ -38,7 +38,7 @@ with patch.object(
     )
     from src.infrastructure.services.remnawave import RemnawaveImpl
     from src.telegram.routers.menu.dialog import menu
-    from src.telegram.routers.whitelist import dialog, getter
+    from src.telegram.routers.whitelist import dialog, getter, on_provider
     from src.telegram.states import MainMenu
 
 
@@ -64,7 +64,11 @@ async def test_transport_signs_identity_and_uses_cabinet_quote_without_email():
     )
     response = AsyncMock()
     response.status = 200
-    response.json.return_value = {"localPaymentId": "p1", "confirmationUrl": "https://pay.test"}
+    response.json.return_value = {
+        "localPaymentId": "p1",
+        "confirmationUrl": "https://pay.test",
+        "provider": "YOOKASSA",
+    }
     context = AsyncMock()
     context.__aenter__.return_value = response
     session = Mock(post=Mock(return_value=context))
@@ -169,6 +173,105 @@ async def test_main_buttons_have_requested_style_and_visibility():
     assert rows[0][0].style == "primary" and "249 ₽" in rows[0][0].text
     gifts = await menu.find("gift_new").render_keyboard({}, manager)
     assert gifts[0][0].style is None
+
+
+async def test_provider_selection_has_separate_retry_keys_and_drops_the_old_invoice():
+    manager = SimpleNamespace(
+        dialog_data={"offer": offer(), "invoice": {"provider": "YOOKASSA"}},
+        middleware_data={USER_KEY: identity()},
+    )
+    cabinet = SimpleNamespace(checkout=AsyncMock())
+    callback = SimpleNamespace(answer=AsyncMock())
+    manager.middleware_data[CONTAINER_KEY] = SimpleNamespace(get=AsyncMock(return_value=cabinet))
+    handler = on_provider
+    cabinet.checkout.return_value = {"provider": "YOOKASSA", "localPaymentId": "yoo"}
+    await handler(callback, None, manager, "YOOKASSA")
+    yoo_key = cabinet.checkout.call_args.args[-1]
+    cabinet.checkout.side_effect = CabinetError("outage")
+    await handler(callback, None, manager, "PLATEGA")
+    platega_key = cabinet.checkout.call_args.args[-1]
+    assert platega_key != yoo_key
+    assert "invoice" not in manager.dialog_data
+    cabinet.checkout.side_effect = None
+    cabinet.checkout.return_value = {"provider": "PLATEGA", "localPaymentId": "platega"}
+    await handler(callback, None, manager, "PLATEGA")
+    assert cabinet.checkout.call_args.args[-1] == platega_key
+    assert manager.dialog_data["invoice"]["provider"] == "PLATEGA"
+
+
+async def test_transport_refuses_an_invoice_from_a_different_provider():
+    client = CabinetWhitelist(
+        SimpleNamespace(
+            web_cabinet_url="https://cabinet.test", cabinet_api_secret=SecretStr("s" * 32)
+        )
+    )
+    with patch.object(
+        client,
+        "_send",
+        return_value={"provider": "YOOKASSA", "confirmationUrl": "https://wrong.test"},
+    ):
+        with pytest.raises(CabinetError, match="Способ оплаты"):
+            await client.checkout(identity(), offer(), "PLATEGA", str(uuid4()))
+
+
+async def test_menu_keeps_recent_confirmed_offer_during_outage_but_checkout_stays_fresh():
+    storage = {}
+
+    async def save(key, value, **kwargs):
+        assert kwargs["ex"] == 300
+        storage[key] = value
+
+    redis = SimpleNamespace(
+        get=AsyncMock(side_effect=lambda key: storage.get(key)), set=AsyncMock(side_effect=save)
+    )
+    client = CabinetWhitelist(
+        SimpleNamespace(
+            web_cabinet_url="https://cabinet.test", cabinet_api_secret=SecretStr("s" * 32)
+        ),
+        redis,
+    )
+    with (
+        patch("src.infrastructure.services.cabinet_whitelist.time.time", return_value=1000),
+        patch.object(client, "_send", return_value=offer()) as send,
+    ):
+        assert (await client.offer(identity(), for_menu=True))["available"]
+        await client.offer(identity(), for_menu=True)
+        assert send.await_count == 1
+    with (
+        patch("src.infrastructure.services.cabinet_whitelist.time.time", return_value=1040),
+        patch.object(client, "_send", side_effect=CabinetError("outage")),
+    ):
+        assert (await client.offer(identity(), for_menu=True))["available"]
+        with pytest.raises(CabinetError):
+            await client.offer(identity())
+        with pytest.raises(CabinetError):
+            await client.checkout(identity(), offer(), "PLATEGA", str(uuid4()))
+    with (
+        patch("src.infrastructure.services.cabinet_whitelist.time.time", return_value=1301),
+        patch.object(client, "_send", side_effect=CabinetError("outage")),
+    ):
+        with pytest.raises(CabinetError):
+            await client.offer(identity(), for_menu=True)
+
+
+async def test_paid_status_and_fresh_unavailability_replace_cached_purchase_button():
+    redis = SimpleNamespace(get=AsyncMock(), set=AsyncMock())
+    client = CabinetWhitelist(
+        SimpleNamespace(
+            web_cabinet_url="https://cabinet.test", cabinet_api_secret=SecretStr("s" * 32)
+        ),
+        redis,
+    )
+    with patch.object(client, "_send", return_value={"status": "SUCCEEDED", "provisioned": False}):
+        await client.request(identity(), "payment", paymentId="p1")
+    assert json.loads(redis.set.call_args.args[1])["offer"]["available"] is False
+    with patch.object(
+        client, "_send", return_value={"available": False, "reason": "Уже подключено"}
+    ):
+        await client.offer(identity())
+    redis.get.return_value = redis.set.call_args.args[1]
+    with patch.object(client, "_send", side_effect=CabinetError("outage")):
+        assert (await client.offer(identity(), for_menu=True))["available"] is False
 
 
 async def test_native_dialog_buys_without_email_and_hides_button_after_activation():  # noqa: C901

@@ -131,9 +131,9 @@ async def menu_getter(
                 "subscription_url": subscription.url,
             }
         )
-        if cabinet.enabled:
+        if cabinet.enabled and subscription.is_active:
             try:
-                offer = await cabinet.offer(user, timeout=4)
+                offer = await cabinet.offer(user, for_menu=True)
                 data["whitelist_available"] = bool(offer.get("available"))
                 data["whitelist_price"] = rubles(offer.get("priceKopecks", 0))
             except CabinetError:
