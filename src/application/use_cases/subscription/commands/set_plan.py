@@ -52,6 +52,7 @@ class SetUserSubscription(Interactor[SetUserSubscriptionDto, None]):
                     user=target_user,
                     uuid=subscription.user_remna_id,
                     plan=plan_snapshot,
+                    previous_plan=subscription.plan_snapshot,
                     reset_traffic=True,
                     trim_excess_devices=True,
                 )

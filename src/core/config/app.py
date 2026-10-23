@@ -1,11 +1,17 @@
 import re
 from pathlib import Path
 from typing import Optional, Self
+from urllib.parse import urlparse
 
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_core.core_schema import FieldValidationInfo
 
-from src.core.constants import API_V1, ASSETS_DEFAULT_DIR, ASSETS_DIR, PAYMENTS_WEBHOOK_PATH
+from src.core.constants import (
+    API_V1,
+    ASSETS_DEFAULT_DIR,
+    ASSETS_DIR,
+    PAYMENTS_WEBHOOK_PATH,
+)
 from src.core.enums import Locale, PaymentGatewayType
 from src.core.types import LocaleList, StringList
 from src.core.utils.validators import is_valid_domain
@@ -37,6 +43,22 @@ class AppConfig(BaseConfig, env_prefix="APP_"):
     swagger_enabled: bool = False
     web_enabled: bool = Field(default=False, validation_alias="WEB_ENABLED")
     web_cabinet_url: str = Field(default="", validation_alias="WEB_CABINET_URL")
+
+    cabinet_api_secret: Optional[SecretStr] = Field(
+        default=None, validation_alias="CABINET_API_SECRET"
+    )
+
+    @model_validator(mode="after")
+    def validate_cabinet_api(self) -> "AppConfig":
+        if self.cabinet_api_secret:
+            if len(self.cabinet_api_secret.get_secret_value()) < 32:
+                raise ValueError("CABINET_API_SECRET must contain at least 32 characters")
+            url = urlparse(self.web_cabinet_url)
+            if url.scheme != "https" or not url.netloc or url.username or url.query or url.fragment:
+                raise ValueError("WEB_CABINET_URL must be a HTTPS origin for Cabinet API")
+            if url.path not in ("", "/"):
+                raise ValueError("WEB_CABINET_URL must not contain a path")
+        return self
 
     bot: BotConfig = Field(default_factory=BotConfig)
     remnawave: RemnawaveConfig = Field(default_factory=RemnawaveConfig)

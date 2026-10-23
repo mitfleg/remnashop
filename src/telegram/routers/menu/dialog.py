@@ -10,7 +10,8 @@ from src.core.constants import INLINE_QUERY_INVITE, PAYMENT_PREFIX
 from src.core.enums import BannerName
 from src.telegram.keyboards import build_buttons_row, connect_buttons
 from src.telegram.routers.dashboard.handlers import on_smart_search
-from src.telegram.routers.gifts import on_gift_history, on_gift_start
+from src.telegram.routers.gifts import on_gift_start
+from src.telegram.routers.whitelist import on_open as on_whitelist_open
 from src.telegram.states import Dashboard, MainMenu, Subscription
 from src.telegram.utils import require_permission
 from src.telegram.widgets import Banner, I18nFormat, IgnoreUpdate
@@ -71,10 +72,18 @@ menu = Window(
     ),
     Row(
         Button(
+            Format("🛡 Купить белые списки · {whitelist_price}"),
+            id="whitelist",
+            on_click=on_whitelist_open,
+            style=Style(ButtonStyle.PRIMARY),
+            when="whitelist_available",
+        ),
+    ),
+    Row(
+        Button(
             I18nFormat("btn-gift.new"),
             id="gift_new",
             on_click=on_gift_start,
-            style=Style(ButtonStyle.SUCCESS),
         ),
     ),
     connect_reserve_button,
@@ -106,9 +115,6 @@ menu = Window(
             id=f"{PAYMENT_PREFIX}subscription",
             state=Subscription.MAIN,
         ),
-    ),
-    Row(
-        Button(I18nFormat("btn-gift.history"), id="gift_history", on_click=on_gift_history),
     ),
     Row(
         Button(

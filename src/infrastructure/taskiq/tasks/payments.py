@@ -5,6 +5,7 @@ from dishka.integrations.taskiq import FromDishka, inject
 from src.application.use_cases.gateways.commands.payment import ProcessPayment, ProcessPaymentDto
 from src.application.use_cases.misc.commands.maintenance import CancelOldTransactions
 from src.core.enums import PaymentGatewayType, TransactionStatus
+from src.infrastructure.services.cabinet_whitelist import CabinetWhitelist
 from src.infrastructure.services.gifts import GiftService
 from src.infrastructure.taskiq.broker import broker
 
@@ -38,3 +39,9 @@ async def cancel_old_transactions_task(
 @inject(patch_module=True)
 async def recover_gifts_task(gifts: FromDishka[GiftService]) -> None:
     await gifts.recover()
+
+
+@broker.task(schedule=[{"cron": "* * * * *"}])
+@inject(patch_module=True)
+async def recover_cabinet_squads_task(cabinet: FromDishka[CabinetWhitelist]) -> None:
+    await cabinet.reconcile_squads()

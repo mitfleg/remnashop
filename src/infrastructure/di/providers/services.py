@@ -1,4 +1,6 @@
 from dishka import AnyOf, Provider, Scope, alias, provide
+from redis.asyncio import Redis
+from remnapy import RemnawaveSDK
 
 from src.application.common import (
     BotService,
@@ -20,6 +22,7 @@ from src.application.services import (
     PricingService,
     RemnaWebhookService,
 )
+from src.core.config import AppConfig
 from src.infrastructure.services import (
     AiogramFileDownloader,
     AiohttpClient,
@@ -40,6 +43,7 @@ from src.infrastructure.services import (
     WebhookService,
     XuiDbReaderImpl,
 )
+from src.infrastructure.services.cabinet_whitelist import CabinetWhitelist
 from src.infrastructure.services.gifts import GiftService
 
 
@@ -64,7 +68,14 @@ class ServicesProvider(Provider):
     command = provide(source=CommandService)
     webhook = provide(source=WebhookService)
 
-    remnawave = provide(source=RemnawaveImpl, provides=Remnawave)
+    @provide
+    def cabinet_whitelist(self, config: AppConfig, redis: Redis) -> CabinetWhitelist:
+        return CabinetWhitelist(config, redis)
+
+    @provide
+    def remnawave(self, sdk: RemnawaveSDK, cabinet: CabinetWhitelist) -> Remnawave:
+        return RemnawaveImpl(sdk, cabinet)
+
     remna_webhook = provide(source=RemnaWebhookService, scope=Scope.REQUEST)
 
     notification_queue = provide(source=NotificationQueue)

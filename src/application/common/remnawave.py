@@ -35,6 +35,7 @@ class Remnawave(Protocol):
         subscription: Optional[SubscriptionDto] = None,
         reset_traffic: bool = False,
         trim_excess_devices: bool = False,
+        previous_plan: Optional[PlanSnapshotDto] = None,
     ) -> UserResponseDto: ...
 
     async def enable_user(self, uuid: UUID) -> None: ...
