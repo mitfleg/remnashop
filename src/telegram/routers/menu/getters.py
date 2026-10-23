@@ -17,6 +17,8 @@ from src.core.utils.i18n_helpers import (
     i18n_format_traffic_limit,
 )
 from src.core.utils.time import get_traffic_reset_delta
+from src.infrastructure.services.cabinet_whitelist import CabinetError, CabinetWhitelist
+from src.telegram.routers.whitelist import rubles
 
 
 @inject
@@ -28,6 +30,7 @@ async def menu_getter(
     i18n: FromDishka[TranslatorRunner],
     get_menu_data: FromDishka[GetMenuData],
     settings_dao: FromDishka[SettingsDao],
+    cabinet: FromDishka[CabinetWhitelist],
     **kwargs: Any,
 ) -> dict[str, Any]:
     try:
@@ -58,6 +61,8 @@ async def menu_getter(
             # referral
             "referral_enabled": menu_data.is_referral_enabled,
             # defaults
+            "whitelist_available": False,
+            "whitelist_price": "",
             "has_subscription": False,
             "connectable": False,
             "trial_available": False,
@@ -126,6 +131,13 @@ async def menu_getter(
                 "subscription_url": subscription.url,
             }
         )
+        if cabinet.enabled:
+            try:
+                offer = await cabinet.offer(user, timeout=4)
+                data["whitelist_available"] = bool(offer.get("available"))
+                data["whitelist_price"] = rubles(offer.get("priceKopecks", 0))
+            except CabinetError:
+                logger.warning("Cabinet whitelist offer is temporarily unavailable")
         logger.debug(f"Menu data for user {user.log}: {data}")
         return data
 

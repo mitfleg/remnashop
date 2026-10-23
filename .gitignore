@@ -4,6 +4,7 @@
 .code-workspace
 data/*
 /tests/*
+!/tests/test_whitelist.py
 !/tests/test_gifts.py
 !/tests/test_broadcast_album.py
 .DS_Store

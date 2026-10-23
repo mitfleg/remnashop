@@ -181,6 +181,7 @@ class PurchaseSubscription(Interactor[PurchaseSubscriptionDto, None]):
                     user=user,
                     uuid=subscription.user_remna_id,
                     subscription=subscription,
+                    plan=plan,
                     reset_traffic=True,
                     trim_excess_devices=True,
                 )
@@ -209,6 +210,7 @@ class PurchaseSubscription(Interactor[PurchaseSubscriptionDto, None]):
                     user=user,
                     uuid=subscription.user_remna_id,
                     plan=plan,
+                    previous_plan=subscription.plan_snapshot,
                     reset_traffic=True,
                     trim_excess_devices=True,
                 )

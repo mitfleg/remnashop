@@ -233,6 +233,7 @@ class ActivatePromocode(Interactor[ActivatePromocodeDto, PromocodeDto]):
                 user=user,
                 uuid=subscription.user_remna_id,
                 plan=plan,
+                previous_plan=subscription.plan_snapshot,
                 reset_traffic=True,
                 trim_excess_devices=True,
             )

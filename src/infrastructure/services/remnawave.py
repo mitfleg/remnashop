@@ -20,6 +20,7 @@ from remnapy.models import (
     UserResponseDto,
 )
 from remnapy.models.hwid import HwidDeviceDto
+from remnapy.models.users import ActiveInternalSquadDto
 
 from src.application.common import Remnawave
 from src.application.common.remnawave import T
@@ -35,11 +36,13 @@ from src.core.constants import REMNAWAVE_MIN_VERSION
 from src.core.enums import SubscriptionStatus
 from src.core.utils.converters import days_to_datetime, gb_to_bytes
 from src.core.utils.time import datetime_now
+from src.infrastructure.services.cabinet_whitelist import CabinetWhitelist
 
 
 class RemnawaveImpl(Remnawave):
-    def __init__(self, sdk: RemnawaveSDK) -> None:
+    def __init__(self, sdk: RemnawaveSDK, cabinet: Optional[CabinetWhitelist] = None) -> None:
         self.sdk = sdk
+        self.cabinet = cabinet
 
     async def try_connection(self) -> Version:
         for attempt in range(1, 4):
@@ -108,8 +111,36 @@ class RemnawaveImpl(Remnawave):
         subscription: Optional[SubscriptionDto] = None,
         reset_traffic: bool = False,
         trim_excess_devices: bool = False,
+        previous_plan: Optional[PlanSnapshotDto] = None,
     ) -> UserResponseDto:
         request_dto = self._build_update_request(user, uuid, plan, subscription)
+        queued_sync = None
+        if self.cabinet and self.cabinet.enabled:
+            # Persist reconciliation before applying primary limits. A Cabinet outage
+            # must not fail a paid VPN renewal or overwrite an existing add-on.
+            snapshot = plan or (subscription.plan_snapshot if subscription else None)
+            if request_dto.expire_at is None:
+                raise ValueError("Primary expiration is required for squad synchronization")
+            queued_sync = await self.cabinet.stage_squad_sync(
+                user,
+                remnawaveUuid=str(uuid),
+                baseSquads=[str(squad) for squad in (request_dto.active_internal_squads or [])],
+                planSquads=[str(squad) for squad in (snapshot.internal_squads if snapshot else [])],
+                previousBaseSquads=[
+                    str(squad)
+                    for squad in (
+                        previous_plan.internal_squads
+                        if previous_plan
+                        else subscription.plan_snapshot.internal_squads
+                        if subscription
+                        else []
+                    )
+                ],
+                expireAt=request_dto.expire_at.isoformat(),
+                active=str(request_dto.status) != "DISABLED",
+            )
+            request_dto.active_internal_squads = None
+            request_dto.model_fields_set.discard("active_internal_squads")
 
         try:
             remna_user = await self.sdk.users.update_user(request_dto)
@@ -122,6 +153,17 @@ class RemnawaveImpl(Remnawave):
                 f"RemnaUser '{request_dto.username}' with UUID '{request_dto.uuid}' not found"
             )
             raise
+
+        if queued_sync and self.cabinet:
+            try:
+                result = await self.cabinet.deliver_squad_sync(queued_sync)
+                names = {s.uuid: s.name for s in remna_user.active_internal_squads}
+                remna_user.active_internal_squads = [
+                    ActiveInternalSquadDto(uuid=UUID(squad), name=names.get(UUID(squad), ""))
+                    for squad in result["activeInternalSquads"]
+                ]
+            except Exception:
+                logger.warning("Primary VPN updated; Cabinet squad reconciliation is queued")
 
         if trim_excess_devices:
             await self._trim_excess_devices(uuid, request_dto.hwid_device_limit)
@@ -190,6 +232,9 @@ class RemnawaveImpl(Remnawave):
         response = await self.sdk.users.get_all_users(start=offset, size=limit)
         logger.debug(f"Fetched {len(response.users)} RemnaUsers (limit={limit}, offset={offset})")
         return response.users
+
+    async def get_users_by_email(self, email: str) -> list[UserResponseDto]:
+        return await self.get_user_by_email(email)
 
     async def get_user_by_email(self, email: str) -> list[UserResponseDto]:
         response = await self.sdk.users.get_users_by_email(email)

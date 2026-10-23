@@ -13,6 +13,10 @@ class MainMenu(StatesGroup):
     INVITE_ABOUT = State()
 
 
+class Whitelist(StatesGroup):
+    MAIN = State()
+
+
 class Notification(StatesGroup):
     CLOSE = State()
 
