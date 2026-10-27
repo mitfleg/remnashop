@@ -7,6 +7,8 @@ data/*
 !/tests/test_whitelist.py
 !/tests/test_gifts.py
 !/tests/test_broadcast_album.py
+!/tests/test_rich_menus.py
+!/tests/rich_menu_helpers.py
 .DS_Store
 traefik
 logs/*
@@ -14,7 +16,8 @@ logs/*
 .history
 .claude
 CLAUDE.md
-docs/
+docs/*
+!docs/rich-menus.md
 
 # Environment
 .venv/

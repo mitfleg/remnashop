@@ -32,7 +32,7 @@ from aiogram.types import (
 from aiogram.types import (
     User as TelegramUser,
 )
-from aiogram_dialog import Dialog, ShowMode, StartMode, Window, setup_dialogs
+from aiogram_dialog import Dialog, ShowMode, StartMode, setup_dialogs
 from aiogram_dialog.api.internal import CONTEXT_KEY
 from aiogram_dialog.widgets.text import Const
 from alembic.migration import MigrationContext
@@ -41,6 +41,7 @@ from dishka import Provider, Scope, from_context, make_async_container
 from dishka.integrations.aiogram import setup_dishka
 from redis.asyncio import Redis
 from remnapy import RemnawaveSDK
+from rich_menu_helpers import rich_response
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
@@ -74,6 +75,8 @@ from src.core.enums import (
     TransactionStatus,
 )
 from src.core.utils.time import datetime_now
+from src.telegram.message_manager import MessageManager
+from src.telegram.window import Window as MenuWindow
 
 with patch.object(
     AppConfig,
@@ -999,7 +1002,10 @@ async def test_old_gift_buttons_use_dialog_and_do_not_create_stale_invoices(acti
 
 
 @pytest.mark.parametrize("banners", [False, True])
-async def test_native_gift_dialog_edits_one_message_through_picker_checkout_and_history(banners):  # noqa: C901
+@pytest.mark.parametrize("rich_enabled", [False, True])
+async def test_native_gift_dialog_edits_one_message_through_picker_checkout_and_history(  # noqa: C901
+    banners, rich_enabled
+):
     class TelegramSession(BaseSession):
         def __init__(self):
             super().__init__()
@@ -1015,6 +1021,10 @@ async def test_native_gift_dialog_edits_one_message_through_picker_checkout_and_
 
         async def make_request(self, bot, method, timeout=None):
             self.calls.append(method)
+            if getattr(method, "rich_message", None):
+                self.next_id += 1
+                self.last_menu = rich_response(method, self.next_id)
+                return self.last_menu
             if method.__api_method__ == "getMe":
                 return TelegramUser(id=123456, is_bot=True, first_name="Bot", username="gift_bot")
             if method.__api_method__ in {
@@ -1172,7 +1182,7 @@ async def test_native_gift_dialog_edits_one_message_through_picker_checkout_and_
     dispatcher.message.register(handlers.on_recipient, F.users_shared)
     dispatcher.callback_query.register(handlers.on_gift_callback, F.data.startswith("gift:"))
     menu_dialog = Dialog(
-        Window(
+        MenuWindow(
             Banner(BannerName.MENU),
             Const("Главное меню"),
             Button(Const("🎁 Подарить VPN"), id="gift", on_click=handlers.on_gift_start),
@@ -1180,10 +1190,10 @@ async def test_native_gift_dialog_edits_one_message_through_picker_checkout_and_
         )
     )
     dispatcher.include_routers(menu_dialog, copy.deepcopy(gift_dialog))
-    setup_dialogs(dispatcher)
+    setup_dialogs(dispatcher, message_manager=MessageManager())
     setup_dishka(container, dispatcher)
     config = SimpleNamespace(
-        bot=SimpleNamespace(use_banners=banners),
+        bot=SimpleNamespace(use_banners=banners, use_rich_messages=rich_enabled),
         banners_dir=Path("assets/banners"),
         default_banners_dir=Path("assets/banners"),
         default_locale=Locale.RU,
@@ -1219,8 +1229,11 @@ async def test_native_gift_dialog_edits_one_message_through_picker_checkout_and_
         return [
             call
             for call in session.calls
-            if call.__api_method__ in {"sendMessage", "sendPhoto"}
-            and isinstance(call.reply_markup, InlineKeyboardMarkup)
+            if call.__api_method__ in {"sendMessage", "sendPhoto", "sendRichMessage"}
+            and (
+                getattr(call, "rich_message", None)
+                or isinstance(getattr(call, "reply_markup", None), InlineKeyboardMarkup)
+            )
         ]
 
     try:

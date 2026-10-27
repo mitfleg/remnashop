@@ -1,5 +1,5 @@
 from aiogram.enums import ButtonStyle
-from aiogram_dialog import Dialog, Window
+from aiogram_dialog import Dialog
 from aiogram_dialog.widgets.input import MessageInput
 from aiogram_dialog.widgets.style import Style
 from aiogram_dialog.widgets.text import Format
@@ -11,6 +11,7 @@ from src.telegram.keyboards import back_main_menu_button, connect_buttons
 from src.telegram.states import Subscription
 from src.telegram.widgets import Banner, I18nFormat, IgnoreUpdate
 from src.telegram.widgets.kbd import Button, Column, Group, Row, Select, SwitchTo, Url
+from src.telegram.window import Window
 
 from .getters import (
     confirm_getter,
