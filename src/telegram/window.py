@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from typing import Optional
 
+from aiogram.client.default import Default
 from aiogram.types import InlineKeyboardMarkup
 from aiogram_dialog import DialogManager, DialogProtocol
 from aiogram_dialog import Window as WindowProtocol
@@ -27,6 +28,10 @@ class Window(WindowProtocol):
         owner_only = getattr(getattr(config, "bot", None), "rich_messages_owner_only", False)
         viewer = manager.middleware_data.get(USER_KEY)
         owner = getattr(getattr(config, "bot", None), "owner_id", None)
+        parse_mode = new_message.parse_mode
+        if isinstance(parse_mode, Default):
+            bot = manager.middleware_data.get("bot")
+            parse_mode = getattr(getattr(bot, "default", None), "parse_mode", None)
         if (
             getattr(getattr(config, "bot", None), "use_rich_messages", False)
             and (
@@ -35,7 +40,7 @@ class Window(WindowProtocol):
             )
             and state.split(":", 1)[0] in {"MainMenu", "Subscription", "Gifts", "Whitelist"}
             and isinstance(new_message.reply_markup, InlineKeyboardMarkup)
-            and new_message.parse_mode in (None, "HTML")
+            and parse_mode in (None, "HTML")
         ):
             try:
                 rich_html = menu_html(new_message.text or "", new_message.reply_markup, state)

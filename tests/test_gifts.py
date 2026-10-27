@@ -1297,6 +1297,7 @@ async def test_native_gift_dialog_edits_one_message_through_picker_checkout_and_
             if call.__api_method__ in {"editMessageText", "editMessageCaption", "editMessageMedia"}
         }
         assert edit_ids == {original_id}
+        assert any(getattr(call, "rich_message", None) for call in session.calls) is rich_enabled
         await click("Главное меню")
         assert (
             session.last_menu.text or session.last_menu.caption

@@ -1,11 +1,12 @@
+from copy import copy
 from dataclasses import replace
 from typing import Any, cast
 
 from aiogram import Bot
 from aiogram.enums import ContentType
 from aiogram.exceptions import TelegramBadRequest, TelegramNotFound
-from aiogram.types import Message
-from aiogram_dialog.api.entities import NewMessage, OldMessage
+from aiogram.types import InputFile, Message
+from aiogram_dialog.api.entities import MediaAttachment, NewMessage, OldMessage
 from aiogram_dialog.manager.message_manager import INPUT_MEDIA_TYPES, SEND_METHODS
 from aiogram_dialog.manager.message_manager import MessageManager as MessageManagerProtocol
 from loguru import logger
@@ -17,6 +18,14 @@ from src.telegram.window import NewMessageWithEffect
 class MessageManager(MessageManagerProtocol):
     def __init__(self) -> None:
         self._rich_disabled: set[int] = set()
+
+    async def get_media_source(self, media: MediaAttachment, bot: Bot) -> InputFile | str:
+        if media.file_id and not media.file_id.file_id:
+            # Rich media is not a top-level Telegram photo. aiogram-dialog can
+            # cache an empty MediaId; retain the original path/URL in that case.
+            media = copy(media)
+            media.file_id = None
+        return await super().get_media_source(media, bot)
 
     async def show_message(
         self, bot: Bot, new_message: NewMessage, old_message: OldMessage | None
