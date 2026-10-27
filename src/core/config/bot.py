@@ -22,8 +22,6 @@ class BotConfig(BaseConfig, env_prefix="BOT_"):
     drop_pending_updates: bool = False
     setup_commands: bool = True
     use_banners: bool = True
-    use_rich_messages: bool = True
-    rich_messages_owner_only: bool = False
 
     @property
     def webhook_path(self) -> str:
