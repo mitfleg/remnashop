@@ -425,6 +425,7 @@ async def test_native_dialog_buys_without_email_and_hides_button_after_activatio
             for row in session.last_menu.reply_markup.inline_keyboard
             for b in row
         )
+        assert any(getattr(call, "rich_message", None) for call in session.calls) is rich_enabled
     finally:
         await container.close()
         await bot.session.close()

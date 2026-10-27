@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from aiogram import Bot
+from aiogram.client.default import Default
 from aiogram.enums import ContentType
 from aiogram.exceptions import TelegramBadRequest, TelegramNetworkError, TelegramNotFound
 from aiogram.types import (
@@ -13,7 +14,7 @@ from aiogram.types import (
     Message,
 )
 from aiogram_dialog import Window as OriginalWindow
-from aiogram_dialog.api.entities import MediaAttachment, ShowMode
+from aiogram_dialog.api.entities import MediaAttachment, MediaId, ShowMode
 from aiogram_dialog.widgets.text import Const
 from rich_menu_helpers import RichButtons, rich_response
 
@@ -34,11 +35,13 @@ from src.telegram.window import NewMessageWithEffect, Window
         (True, None, True, False),
     ],
 )
+@pytest.mark.parametrize("parse_mode", ["HTML", Default("parse_mode")])
 async def test_owner_canary_preserves_legacy_menu_for_other_users(
-    owner_only, viewer, enabled, expected
+    owner_only, viewer, enabled, expected, parse_mode
 ):
     window = Window(Const("Подписка"), state=MainMenu.MAIN)
     original = message()
+    original.parse_mode = parse_mode
     manager = SimpleNamespace(
         middleware_data={
             CONFIG_KEY: SimpleNamespace(
@@ -49,6 +52,7 @@ async def test_owner_canary_preserves_legacy_menu_for_other_users(
                 )
             ),
             USER_KEY: SimpleNamespace(telegram_id=viewer),
+            "bot": SimpleNamespace(default=SimpleNamespace(parse_mode="HTML")),
         }
     )
     with patch.object(OriginalWindow, "render", AsyncMock(return_value=original)):
@@ -243,4 +247,14 @@ async def test_raw_request_serializes_nested_upload_without_exposing_other_field
     files = {}
     data = bot.session.prepare_value(method.rich_message, bot=bot, files=files)
     assert '"html"' in data and "attach://" in data and len(files) == 1
+    await bot.session.close()
+
+
+async def test_embedded_banner_recovers_original_source_after_empty_framework_cache():
+    bot = Bot("123456:TEST_TOKEN")
+    original = message(banner=True)
+    original.media.file_id = MediaId(None, None)
+    payload = await MessageManager()._rich_payload(bot, original)
+    assert isinstance(payload["media"][0]["media"].media, FSInputFile)
+    assert original.media.file_id.file_id is None
     await bot.session.close()
