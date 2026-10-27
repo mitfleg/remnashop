@@ -14,16 +14,19 @@ from aiogram.client.session.base import BaseSession
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Chat, InlineKeyboardMarkup, Message, Update
 from aiogram.types import User as TelegramUser
-from aiogram_dialog import Dialog, Window, setup_dialogs
+from aiogram_dialog import Dialog, setup_dialogs
 from aiogram_dialog.widgets.text import Const
 from dishka import Provider, Scope, from_context, make_async_container
 from dishka.integrations.aiogram import setup_dishka
 from pydantic import SecretStr
+from rich_menu_helpers import rich_response
 
 from src.application.dto import PlanSnapshotDto, SubscriptionDto, TelegramUserDto
 from src.core.config import AppConfig
 from src.core.constants import CONFIG_KEY, CONTAINER_KEY, USER_KEY
 from src.core.utils.time import datetime_now
+from src.telegram.message_manager import MessageManager
+from src.telegram.window import Window
 
 with patch.object(
     AppConfig,
@@ -274,7 +277,10 @@ async def test_paid_status_and_fresh_unavailability_replace_cached_purchase_butt
         assert (await client.offer(identity(), for_menu=True))["available"] is False
 
 
-async def test_native_dialog_buys_without_email_and_hides_button_after_activation():  # noqa: C901
+@pytest.mark.parametrize("rich_enabled", [False, True])
+async def test_native_dialog_buys_without_email_and_hides_button_after_activation(  # noqa: C901
+    rich_enabled,
+):
     class TelegramSession(BaseSession):
         def __init__(self):
             super().__init__()
@@ -289,6 +295,9 @@ async def test_native_dialog_buys_without_email_and_hides_button_after_activatio
 
         async def make_request(self, bot, method, timeout=None):
             self.calls.append(method)
+            if getattr(method, "rich_message", None):
+                self.last_menu = rich_response(method)
+                return self.last_menu
             if method.__api_method__ == "getMe":
                 return TelegramUser(id=123456, is_bot=True, first_name="Bot", username="test_bot")
             if method.__api_method__ in {
@@ -351,7 +360,7 @@ async def test_native_dialog_buys_without_email_and_hides_button_after_activatio
         )
     )
     dispatcher.include_routers(main, copy.deepcopy(dialog))
-    setup_dialogs(dispatcher)
+    setup_dialogs(dispatcher, message_manager=MessageManager())
     setup_dishka(container, dispatcher)
     sender = TelegramUser(id=123, is_bot=False, first_name="Buyer")
     counter = 0
@@ -365,7 +374,8 @@ async def test_native_dialog_buys_without_email_and_hides_button_after_activatio
             **{
                 USER_KEY: identity(),
                 CONFIG_KEY: SimpleNamespace(
-                    bot=SimpleNamespace(use_banners=False), banners_dir=Path("assets/banners")
+                    bot=SimpleNamespace(use_banners=False, use_rich_messages=rich_enabled),
+                    banners_dir=Path("assets/banners"),
                 ),
             },
         )
